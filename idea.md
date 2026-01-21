@@ -1,212 +1,212 @@
-# 🧠 AI-агент-фильтр входящих знаний (Inbox Agent Bot)
+# 🧠 AI Knowledge Inbox Filter Agent (Inbox Agent Bot)
 
-## 🎯 Цель проекта
-Создать **интеллектуального агента-куратора знаний**, который:
-- Принимает неструктурированные данные через Telegram
-- Накапливает их в течение недели
-- Раз в неделю (по запуску) обрабатывает все сообщения с помощью LLM
-- Создаёт структурированные Markdown-заметки в Obsidian Vault
+## 🎯 Project Goal
+Create an **intelligent knowledge curator agent** that:
+- Accepts unstructured data via Telegram
+- Accumulates it throughout the week
+- Once a week (on trigger) processes all messages using LLM
+- Creates structured Markdown notes in Obsidian Vault
 
-**Главный принцип:**
-> ❗ Лучше сохранить сомнительное, чем удалить полезное.
+**Core principle:**
+> ❗ Better to save something doubtful than delete something useful.
 
-**Цель проекта для меня:**
-- Избежать прокрастинации (не уходить в изучение каждой идеи сразу)
-- Накапливать идеи/вопросы/ссылки и обрабатывать пакетами
-- Изучить новые технологии: LangChain, Anthropic API, Docker, агентные системы
+**Personal project goals:**
+- Avoid procrastination (don't dive into studying every idea immediately)
+- Accumulate ideas/questions/links and process them in batches
+- Learn new technologies: LangChain, Anthropic API, Docker, agent systems
 
 ---
 
-## 🏗️ Техническая архитектура
+## 🏗️ Technical Architecture
 
-### Технологический стек
+### Tech Stack
 - **Python 3.11+**
-- **python-telegram-bot** — получение сообщений из Telegram
-- **Anthropic API (Claude Sonnet 4)** — обработка и структурирование знаний
-- **LangChain** — фреймворк для работы с LLM (chains, промпты, парсинг)
-- **Jina Reader API** — парсинг веб-страниц в markdown
-- **youtube-transcript-api** — получение субтитров YouTube-видео (автоматические и ручные)
-- **Docker** — контейнеризация и изоляция окружения
-- **SQLite** — локальная БД для истории обработок
-- **JSON** — хранение user_profile (интересы и приоритеты)
+- **python-telegram-bot** — receiving messages from Telegram
+- **Anthropic API (Claude Sonnet 4)** — processing and structuring knowledge
+- **LangChain** — framework for working with LLMs (chains, prompts, parsing)
+- **Jina Reader API** — parsing web pages to markdown
+- **youtube-transcript-api** — fetching YouTube video transcripts (automatic and manual)
+- **Docker** — containerization and environment isolation
+- **SQLite** — local DB for processing history
+- **JSON** — storing user_profile (interests and priorities)
 
-### Режим работы
-**Триггерный запуск (раз в неделю):**
-1. Запускаешь Docker-контейнер: `docker run inbox-agent-bot`
-2. Бот подключается к Telegram и получает все накопленные сообщения
-3. Обрабатывает их через Claude Sonnet 4
-4. Создаёт структурированные заметки в Obsidian
-5. Завершает работу и выключается
+### Operating Mode
+**Trigger-based run (once a week):**
+1. Start Docker container: `docker run inbox-agent-bot`
+2. Bot connects to Telegram and retrieves all accumulated messages
+3. Processes them through Claude Sonnet 4
+4. Creates structured notes in Obsidian
+5. Completes work and shuts down
 
-**Хранение очереди:** пока бот офлайн, сообщения хранятся на серверах Telegram
+**Queue storage:** while bot is offline, messages are stored on Telegram servers
 
-### Пути и конфигурация
+### Paths and Configuration
 - **Obsidian Vault:** `/Users/ionko/Documents/my_vault/life/weekly/`
-- **Weekly digest:** `YYYY-Www_digest.md` (например, `2025-W03_digest.md`)
-- **Тематические заметки:** отдельные `.md` файлы в той же папке
+- **Weekly digest:** `YYYY-Www_digest.md` (e.g., `2025-W03_digest.md`)
+- **Themed notes:** separate `.md` files in the same folder
 
 ---
 
-## 📥 Формат входных данных
+## 📥 Input Data Format
 
-### Типы сообщений
-1. **Простые текстовые заметки** — мысли, идеи, наблюдения
-2. **Исследовательские запросы** — "Фарфор в Китае", "Как работает RAG"
-   - Агент должен сделать небольшой поиск и создать абзац базовых знаний
-3. **Ссылки на статьи** — парсятся через Jina Reader
-4. **YouTube-ссылки** — извлекаются субтитры через youtube-transcript-api (если есть субтитры — анализируются, если нет — сохраняется только ссылка с пометкой)
-5. **Цитаты и обрывки мыслей** — любой неструктурированный текст
+### Message Types
+1. **Simple text notes** — thoughts, ideas, observations
+2. **Research queries** — "Porcelain in China", "How does RAG work"
+   - Agent should do a small search and create a paragraph of basic knowledge
+3. **Article links** — parsed via Jina Reader
+4. **YouTube links** — transcripts extracted via youtube-transcript-api (if transcripts exist — analyzed, if not — only link saved with note)
+5. **Quotes and thought fragments** — any unstructured text
 
-### Примеры
-- "Фарфор в Китае" → агент создаёт заметку с кратким обзором темы
-- https://example.com/article → агент читает статью и создаёт саммари
-- https://youtube.com/watch?v=xxx → агент извлекает транскрипт или название
-- "Идея: сделать бота для фильтрации знаний" → сохраняется как сырая идея
+### Examples
+- "Porcelain in China" → agent creates a note with brief topic overview
+- https://example.com/article → agent reads article and creates summary
+- https://youtube.com/watch?v=xxx → agent extracts transcript or title
+- "Idea: make a bot for knowledge filtering" → saved as raw idea
 
 ---
 
-## 📤 Формат выхода (Obsidian)
+## 📤 Output Format (Obsidian)
 
-### Структура Weekly Digest
-**Файл:** `2025-W03_digest.md`
+### Weekly Digest Structure
+**File:** `2025-W03_digest.md`
 
 ```markdown
 # Weekly Digest — 2025 Week 03
 
-## 📊 Статистика
-- Всего сообщений: 42
-- Создано заметок: 8
-- Исследовательских запросов: 3
-- Ссылок обработано: 12
+## 📊 Statistics
+- Total messages: 42
+- Notes created: 8
+- Research queries: 3
+- Links processed: 12
 
-## 🗂️ Темы недели
+## 🗂️ Topics of the Week
 
 ### AI/ML
-- [[mcp_protocol_deep_dive]] — разбор Model Context Protocol
-- [[rag_architectures_comparison]] — сравнение подходов к RAG
+- [[mcp_protocol_deep_dive]] — Model Context Protocol breakdown
+- [[rag_architectures_comparison]] — comparison of RAG approaches
 
-### Математика
-- [[probability_puzzle_monty_hall]] — парадокс Монти Холла
-- [[linear_algebra_practical_uses]] — применение линейной алгебры
+### Mathematics
+- [[probability_puzzle_monty_hall]] — Monty Hall paradox
+- [[linear_algebra_practical_uses]] — practical applications of linear algebra
 
-### Политика
-- [[geopolitics_2025_trends]] — тренды в международных отношениях
+### Politics
+- [[geopolitics_2025_trends]] — trends in international relations
 
-### Финансы
-- [[investment_basics_summary]] — базовые принципы инвестирования
+### Finance
+- [[investment_basics_summary]] — basic investment principles
 
-### IT/Архитектура
-- [[aws_ci_cd_best_practices]] — лучшие практики CI/CD в AWS
+### IT/Architecture
+- [[aws_ci_cd_best_practices]] — CI/CD best practices in AWS
 
 ### Product/Leadership
-- [[startup_team_building_notes]] — заметки о сборе команды
+- [[startup_team_building_notes]] — notes on team building
 
-## ⚠️ Требует внимания
-- [[uncertain_topic_xyz]] #needs_review — не уверен в релевантности
+## ⚠️ Needs Attention
+- [[uncertain_topic_xyz]] #needs_review — not sure about relevance
 ```
 
-### Структура тематической заметки
-**Файл:** `mcp_protocol_deep_dive.md`
+### Themed Note Structure
+**File:** `mcp_protocol_deep_dive.md`
 
 ```markdown
 # MCP Protocol Deep Dive
 
-## 🎯 Краткое резюме
-Model Context Protocol (MCP) — открытый протокол для подключения AI-ассистентов к внешним источникам данных. Разработан Anthropic.
+## 🎯 Quick Summary
+Model Context Protocol (MCP) — open protocol for connecting AI assistants to external data sources. Developed by Anthropic.
 
-## 💡 Основные идеи
-- Позволяет Claude работать с файлами, БД, API без костылей
-- Архитектура: клиент-сервер, JSON-RPC
-- Можно создавать свои MCP-серверы для кастомных источников
+## 💡 Key Ideas
+- Allows Claude to work with files, DBs, APIs without hacks
+- Architecture: client-server, JSON-RPC
+- Can create custom MCP servers for custom sources
 
-## 🔗 Ссылки и источники
-- [Официальная документация MCP](https://modelcontextprotocol.io)
-- [Видео: MCP Tutorial](https://youtube.com/watch?v=xxx)
-  - Транскрипт: "MCP упрощает интеграцию контекста..."
+## 🔗 Links and Sources
+- [Official MCP Documentation](https://modelcontextprotocol.io)
+- [Video: MCP Tutorial](https://youtube.com/watch?v=xxx)
+  - Transcript: "MCP simplifies context integration..."
 
-## 🤔 Мысли и интерпретации
-- Это решает проблему "AI не видит мои файлы"
-- Потенциально можно подключить к Obsidian через MCP
-- Стоит попробовать написать свой MCP-сервер
+## 🤔 Thoughts and Interpretations
+- This solves the "AI can't see my files" problem
+- Could potentially connect to Obsidian via MCP
+- Worth trying to write a custom MCP server
 
-## ❓ Вопросы и сомнения
-- Насколько безопасно давать AI доступ к файлам?
-- Есть ли ограничения на размер передаваемого контекста?
+## ❓ Questions and Doubts
+- How safe is it to give AI access to files?
+- Are there limits on context size transmitted?
 
-## 🏷️ Теги
+## 🏷️ Tags
 #ai #mcp #anthropic #tools #learn #actionable
 ```
 
 ---
 
-## 🧠 Система фильтров (логика агента)
+## 🧠 Filter System (Agent Logic)
 
-### 1️⃣ Фильтр полезности
-**Вопрос:** Несёт ли это знание или потенциал знания?
+### 1️⃣ Usefulness Filter
+**Question:** Does this carry knowledge or knowledge potential?
 
-**Критерии:**
-- Есть ли идея, инсайт, факт, гипотеза?
-- Связано ли с моими интересами? (см. user_profile.json)
-- Может ли пригодиться в будущем?
+**Criteria:**
+- Is there an idea, insight, fact, hypothesis?
+- Related to my interests? (see user_profile.json)
+- Could it be useful in the future?
 
-**Решения:**
-- ✅ Оставить
-- ⚠️ Оставить с пометкой `#needs_review`
-- ❌ Удалить (только если 100% мусор)
+**Decisions:**
+- ✅ Keep
+- ⚠️ Keep with `#needs_review` marker
+- ❌ Delete (only if 100% garbage)
 
-### 2️⃣ Фильтр новизны
-**Вопрос:** Это дубль или новая информация?
+### 2️⃣ Novelty Filter
+**Question:** Is this a duplicate or new information?
 
-**Логика:**
-- Сравнивать только с данными текущей недели (не с историей Obsidian)
-- Если тема повторяется → объединить в одну заметку
-- Если дубль → пометить как `#duplicate`
+**Logic:**
+- Compare only with current week's data (not with Obsidian history)
+- If topic repeats → merge into one note
+- If duplicate → mark as `#duplicate`
 
-### 3️⃣ Фильтр зрелости мысли
-**Классификация:**
-- 🌱 `#raw` — сырая идея, обрывок мысли
-- 🌿 `#developing` — развивающаяся концепция
-- 🌳 `#mature` — сформированная мысль
+### 3️⃣ Thought Maturity Filter
+**Classification:**
+- 🌱 `#raw` — raw idea, thought fragment
+- 🌿 `#developing` — developing concept
+- 🌳 `#mature` — formed thought
 
-### 4️⃣ Фильтр применимости
-**Вопрос:** Можно ли это превратить в действие?
+### 4️⃣ Actionability Filter
+**Question:** Can this be turned into action?
 
-**Теги:**
-- `#actionable` — можно сделать/попробовать
-- `#theory` — абстрактное знание
-- `#idea` — идея проекта/эксперимента
-- `#reference` — справочная информация
+**Tags:**
+- `#actionable` — can do/try
+- `#theory` — abstract knowledge
+- `#idea` — project/experiment idea
+- `#reference` — reference information
 
-### 5️⃣ Фильтр уверенности (анти-удаление)
-**Правило:** Если агент не уверен → НЕ удалять, а помечать!
+### 5️⃣ Confidence Filter (anti-deletion)
+**Rule:** If agent is uncertain → DON'T delete, mark it!
 
-**Маркеры сомнений:**
-- `⚠️ #needs_review` — требует ручной проверки
-- `❓ #uncertain` — не уверен в релевантности
-- `🟡 #low_confidence` — низкая уверенность в категоризации
+**Doubt markers:**
+- `⚠️ #needs_review` — requires manual review
+- `❓ #uncertain` — unsure about relevance
+- `🟡 #low_confidence` — low confidence in categorization
 
 ---
 
-## 🏷️ Система тегов
+## 🏷️ Tagging System
 
-### Тип контента
-- `#thought` — мысль, наблюдение
-- `#link` — обработанная ссылка
-- `#quote` — цитата
-- `#research` — исследовательский запрос
-- `#video` — видео (YouTube и др.)
+### Content Type
+- `#thought` — thought, observation
+- `#link` — processed link
+- `#quote` — quote
+- `#research` — research query
+- `#video` — video (YouTube etc.)
 
-### Темы (из user_profile.json)
-- `#math` — математика
+### Topics (from user_profile.json)
+- `#math` — mathematics
 - `#ai` — AI/ML
-- `#politics` — политика
-- `#finance` — финансы
-- `#it` — IT, архитектура, DevOps
-- `#product` — продукт, стартапы
-- `#leadership` — менеджмент, тимлидство
-- `#systems` — системное мышление
+- `#politics` — politics
+- `#finance` — finance
+- `#it` — IT, architecture, DevOps
+- `#product` — product, startups
+- `#leadership` — management, team lead
+- `#systems` — systems thinking
 
-### Состояние
+### State
 - `#raw` / `#developing` / `#mature`
 - `#actionable` / `#theory` / `#idea` / `#reference`
 - `#needs_review` / `#uncertain` / `#low_confidence`
@@ -216,40 +216,40 @@ Model Context Protocol (MCP) — открытый протокол для под
 
 ## 🎛️ User Profile (user_profile.json)
 
-Профиль интересов и приоритетов создаётся отдельно (не в этом боте).
+Interest and priority profile is created separately (not in this bot).
 
-**Структура файла:**
+**File structure:**
 ```json
 {
   "interests": {
     "math": {
       "weight": 0.9,
-      "keywords": ["математика", "задачи", "доказательства", "алгоритмы"],
+      "keywords": ["mathematics", "problems", "proofs", "algorithms"],
       "priority": "high"
     },
     "ai": {
       "weight": 1.0,
-      "keywords": ["AI", "ML", "LLM", "RAG", "MCP", "агенты", "Claude", "GPT"],
+      "keywords": ["AI", "ML", "LLM", "RAG", "MCP", "agents", "Claude", "GPT"],
       "priority": "critical"
     },
     "politics": {
       "weight": 0.85,
-      "keywords": ["политика", "геополитика", "выборы", "дипломатия"],
+      "keywords": ["politics", "geopolitics", "elections", "diplomacy"],
       "priority": "high"
     },
     "finance": {
       "weight": 0.7,
-      "keywords": ["финансы", "инвестиции", "акции", "бюджет"],
+      "keywords": ["finance", "investments", "stocks", "budget"],
       "priority": "medium"
     },
     "it": {
       "weight": 0.95,
-      "keywords": ["архитектура", "AWS", "CI/CD", "Docker", "Kubernetes"],
+      "keywords": ["architecture", "AWS", "CI/CD", "Docker", "Kubernetes"],
       "priority": "high"
     },
     "product": {
       "weight": 0.9,
-      "keywords": ["стартап", "продукт", "команда", "тимлид", "менеджмент"],
+      "keywords": ["startup", "product", "team", "team lead", "management"],
       "priority": "high"
     }
   },
@@ -261,90 +261,90 @@ Model Context Protocol (MCP) — открытый протокол для под
   },
   "blacklist": {
     "topics": ["celebrity gossip", "sports scores", "fashion trends"],
-    "keywords": ["clickbait", "топ-10", "шок"]
+    "keywords": ["clickbait", "top-10", "shock"]
   }
 }
 ```
 
-**Создание профиля:** используй промпт (см. выше) в отдельном чате с AI.
+**Profile creation:** use prompt (see above) in a separate AI chat.
 
 ---
 
-## 🔄 Workflow обработки
+## 🔄 Processing Workflow
 
-### Шаг 1: Получение сообщений
-- Подключение к Telegram Bot API
-- Получение всех непрочитанных сообщений
-- Сохранение в локальную БД (SQLite)
+### Step 1: Message Retrieval
+- Connect to Telegram Bot API
+- Retrieve all unread messages
+- Save to local DB (SQLite)
 
-### Шаг 2: Предобработка
-- Распознавание типа сообщения (текст, ссылка, YouTube, исследовательский запрос)
-- Парсинг веб-ссылок через Jina Reader API
-- Извлечение субтитров YouTube через youtube-transcript-api:
-  - Попытка получить субтитры (русские или английские)
-  - Если субтитров нет → сохранить URL с пометкой `#needs_manual_review`
-- Для исследовательских запросов: веб-поиск или генерация базовых знаний через Claude
+### Step 2: Preprocessing
+- Recognize message type (text, link, YouTube, research query)
+- Parse web links via Jina Reader API
+- Extract YouTube transcripts via youtube-transcript-api:
+  - Attempt to get transcripts (Russian or English)
+  - If no transcripts → save URL with `#needs_manual_review` marker
+- For research queries: web search or generate basic knowledge via Claude
 
-### Шаг 3: Обработка через Claude
-- Формирование промпта с учётом user_profile.json
-- Отправка всех сообщений одним батчем (30-50 сообщений на 200k контекст)
-- Применение фильтров (полезность, новизна, зрелость, применимость, уверенность)
-- Группировка по темам
-- Создание структурированных заметок
+### Step 3: Processing through Claude
+- Form prompt considering user_profile.json
+- Send all messages in one batch (30-50 messages per 200k context)
+- Apply filters (usefulness, novelty, maturity, actionability, confidence)
+- Group by topics
+- Create structured notes
 
-### Шаг 4: Генерация выхода
-- Создание Weekly Digest файла
-- Создание отдельных тематических заметок
-- Сохранение в `/Users/ionko/Documents/my_vault/life/weekly/`
+### Step 4: Output Generation
+- Create Weekly Digest file
+- Create separate themed notes
+- Save to `/Users/ionko/Documents/my_vault/life/weekly/`
 
-### Шаг 5: Логирование и завершение
-- Сохранение метрики обработки в БД
-- Опциональное обновление user_profile.json (статистика использования тем)
-- Завершение работы контейнера
-
----
-
-## 🧠 Принципы работы агента
-
-> **Если не уверен — НЕ удаляй.**
-
-> **Если сомневаешься — пометь маркером.**
-
-> **Если видишь потенциал — сохрани и структурируй.**
-
-Агент — это **редактор и куратор**, а не архиватор:
-- Убирает шум
-- Выделяет смысл
-- Связывает идеи
-- Принимает осторожные решения
-- Помечает сомнения вместо удаления
+### Step 5: Logging and Completion
+- Save processing metrics to DB
+- Optionally update user_profile.json (topic usage statistics)
+- Complete container work
 
 ---
 
-## 🔮 Будущие улучшения (v2.0+)
+## 🧠 Agent Operating Principles
 
-### Автоматическое обучение профилю
-- Отслеживание, какие заметки ты читаешь/редактируешь
-- Автоматическая корректировка весов интересов
-- Подсказки: "Эту тему ты изучаешь уже 3 недели подряд"
+> **If uncertain — DON'T delete.**
 
-### Связывание заметок
-- Автоматическое создание [[wikilinks]] между связанными темами
-- Ведение карты знаний (knowledge graph)
-- Обнаружение повторяющихся паттернов мышления
+> **If in doubt — mark with a marker.**
 
-### Расширенный поиск
-- Векторный поиск по всем заметкам в Obsidian (embeddings)
-- Фильтр новизны на уровне всей базы знаний, а не только недели
+> **If you see potential — save and structure.**
 
-### Интеграция с внешними источниками
-- Автоматический импорт из Pocket, Instapaper, Readwise
-- RSS-фиды для автоматического отслеживания тем
-- Интеграция с research papers (arXiv, Google Scholar)
+Agent is an **editor and curator**, not an archiver:
+- Removes noise
+- Highlights meaning
+- Connects ideas
+- Makes cautious decisions
+- Marks doubts instead of deleting
 
 ---
 
-## 📦 Структура проекта (предполагаемая)
+## 🔮 Future Improvements (v2.0+)
+
+### Automatic Profile Learning
+- Track which notes you read/edit
+- Automatic adjustment of interest weights
+- Hints: "You've been studying this topic for 3 weeks straight"
+
+### Note Linking
+- Automatic creation of [[wikilinks]] between related topics
+- Maintain knowledge graph
+- Detect recurring thought patterns
+
+### Advanced Search
+- Vector search across all Obsidian notes (embeddings)
+- Novelty filter at knowledge base level, not just weekly
+
+### External Source Integration
+- Automatic import from Pocket, Instapaper, Readwise
+- RSS feeds for automatic topic tracking
+- Integration with research papers (arXiv, Google Scholar)
+
+---
+
+## 📦 Project Structure (Expected)
 
 ```
 inbox_agent_bot/
@@ -352,21 +352,21 @@ inbox_agent_bot/
 │   ├── Dockerfile
 │   └── docker-compose.yml
 ├── src/
-│   ├── main.py                 # Точка входа
-│   ├── telegram_client.py      # Получение сообщений из Telegram
-│   ├── preprocessor.py         # Парсинг ссылок, YouTube, типов сообщений
-│   ├── llm_agent.py            # Работа с Claude через LangChain
-│   ├── obsidian_writer.py      # Создание Markdown-файлов
-│   ├── database.py             # SQLite для истории
-│   └── config.py               # Загрузка user_profile.json и env vars
+│   ├── main.py                 # Entry point
+│   ├── telegram_client.py      # Telegram message retrieval
+│   ├── preprocessor.py         # Link, YouTube, message type parsing
+│   ├── llm_agent.py            # Claude work via LangChain
+│   ├── obsidian_writer.py      # Markdown file creation
+│   ├── database.py             # SQLite for history
+│   └── config.py               # Load user_profile.json and env vars
 ├── config/
-│   ├── user_profile.json       # Профиль интересов
-│   └── .env                    # API ключи (Telegram, Anthropic, Jina)
+│   ├── user_profile.json       # Interest profile
+│   └── .env                    # API keys (Telegram, Anthropic, Jina)
 ├── data/
-│   └── history.db              # SQLite БД
+│   └── history.db              # SQLite DB
 ├── prompts/
-│   ├── system_prompt.txt       # Системный промпт для Claude
-│   └── filters.txt             # Описание фильтров для агента
+│   ├── system_prompt.txt       # System prompt for Claude
+│   └── filters.txt             # Filter descriptions for agent
 ├── tests/
 │   └── ...
 ├── requirements.txt
@@ -375,37 +375,37 @@ inbox_agent_bot/
 
 ---
 
-## 🚀 Roadmap разработки
+## 🚀 Development Roadmap
 
-### Phase 1: MVP (минимальная рабочая версия)
-- [ ] Telegram-бот получает сообщения
-- [ ] Базовая интеграция с Claude Sonnet 4
-- [ ] Простая обработка текстов (без ссылок)
-- [ ] Создание Weekly Digest + одной тематической заметки
-- [ ] Docker-контейнер для запуска
+### Phase 1: MVP (Minimum Viable Product)
+- [ ] Telegram bot receives messages
+- [ ] Basic Claude Sonnet 4 integration
+- [ ] Simple text processing (without links)
+- [ ] Create Weekly Digest + one themed note
+- [ ] Docker container for running
 
-### Phase 2: Полные фичи
-- [ ] Парсинг веб-ссылок (Jina Reader)
-- [ ] Поддержка YouTube (субтитры)
-- [ ] Исследовательские запросы (веб-поиск или генерация знаний)
-- [ ] Применение всех 5 фильтров
-- [ ] Загрузка user_profile.json
+### Phase 2: Full Features
+- [ ] Web link parsing (Jina Reader)
+- [ ] YouTube support (transcripts)
+- [ ] Research queries (web search or knowledge generation)
+- [ ] Apply all 5 filters
+- [ ] Load user_profile.json
 
-### Phase 3: Полировка
-- [ ] Логирование и статистика
-- [ ] Обработка ошибок и fallback-сценарии
-- [ ] Тесты (unit + integration)
-- [ ] Документация для пользователя
+### Phase 3: Polish
+- [ ] Logging and statistics
+- [ ] Error handling and fallback scenarios
+- [ ] Tests (unit + integration)
+- [ ] User documentation
 
-### Phase 4: Будущее
-- [ ] Автоматическое обучение профилю
-- [ ] Векторный поиск по Obsidian
-- [ ] Web-интерфейс для настройки
-- [ ] Поддержка голосовых сообщений
+### Phase 4: Future
+- [ ] Automatic profile learning
+- [ ] Vector search across Obsidian
+- [ ] Web interface for configuration
+- [ ] Voice message support
 
 ---
 
-## 📚 Полезные ресурсы
+## 📚 Useful Resources
 
 - [Anthropic API Docs](https://docs.anthropic.com/)
 - [LangChain Documentation](https://python.langchain.com/)
@@ -416,10 +416,10 @@ inbox_agent_bot/
 
 ---
 
-## 🎯 Успех проекта = научиться новым технологиям + получить working tool
+## 🎯 Project Success = Learn New Technologies + Get Working Tool
 
-Этот проект — не просто фильтр, а **второй мозг-редактор**, который:
-- Снижает когнитивную нагрузку
-- Уважает неопределённость
-- Помогает превращать хаос во внутреннюю систему знаний
-- Позволяет мне изучить LangChain, Claude API, агентные системы на практике
+This project is not just a filter, but a **second brain-editor** that:
+- Reduces cognitive load
+- Respects uncertainty
+- Helps turn chaos into an internal knowledge system
+- Allows me to learn LangChain, Claude API, agent systems in practice
