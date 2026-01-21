@@ -1,0 +1,392 @@
+{
+    "version": "1.1",
+    "user": {
+        "preferred_name": "Макс",
+        "primary_language": "ru",
+        "target_languages": {
+            "en": { "priority": 0.9, "purpose": ["career", "tech", "policy"] },
+            "fr": { "priority": 0.75, "purpose": ["eu_policy_career", "culture", "reading"] }
+        },
+        "core_style_preferences": {
+            "practicality_over_theory": true,
+            "depth_over_breadth": true,
+            "systems_thinking": true,
+            "prefers_actionable_outputs": true,
+            "prefers_tradeoffs_and_mechanisms": true
+        }
+    },
+    "processing_priorities": {
+        "ranking_rules": [
+            "Prefer content that explains mechanisms (inputs → process → outputs) and shows trade-offs.",
+            "Prefer structured material (frameworks, checklists, diagrams, evaluation methods).",
+            "Prefer primary sources (official docs, laws, standards, papers) over commentary.",
+            "Prefer content that can be applied to real tasks/projects within 1–4 weeks.",
+            "Prefer EU-context relevance for politics/regulation.",
+            "Deprioritize anything that is pseudo-scientific, mystical, or unfalsifiable."
+        ],
+        "source_quality_preferences": {
+            "preferred_source_types": [
+                "official_docs",
+                "eu_legal_texts",
+                "standards_specs",
+                "peer_reviewed_papers",
+                "reputable_policy_briefs",
+                "engineering_blogs_from_major_orgs",
+                "books_textbooks"
+            ],
+            "deprioritize_source_types": [
+                "generic_listicles",
+                "opinion_only_threads",
+                "unverified_news_roundups",
+                "growth_hacks_without_data"
+            ]
+        },
+        "recency_preferences_days": {
+            "policy_and_regulation": 90,
+            "ai_ml_tooling_and_frameworks": 60,
+            "security_incidents": 45,
+            "evergreen_fundamentals": 3650,
+            "career_guides": 365
+        },
+        "format_preferences": {
+            "preferred_formats": [
+                "structured_notes",
+                "frameworks_and_templates",
+                "case_studies",
+                "comparative_analysis",
+                "implementation_guides",
+                "checklists",
+                "reading_paths"
+            ],
+            "preferred_answer_template": [
+                "essence",
+                "how_it_works",
+                "tradeoffs",
+                "practical_steps",
+                "pitfalls",
+                "glossary",
+                "what_to_read_next"
+            ]
+        },
+        "language_handling": {
+            "language_bonus": {
+                "en": 0.10,
+                "fr": 0.08
+            },
+            "language_mode": "prefer_en_fr_when_quality_high",
+            "ignore_if_only_language_practice": true
+        }
+    },
+    "interest_areas": [
+        {
+            "id": "politics_overall",
+            "weight": 0.95,
+            "subweights": {
+                "comparative_politics_and_history": 0.50,
+                "political_philosophy_theory": 0.30,
+                "eu_digital_regulation": 0.20
+            },
+            "keywords": [
+                "political institutions",
+                "comparative politics",
+                "political history",
+                "state capacity",
+                "legitimacy",
+                "political economy",
+                "governance models",
+                "democratization",
+                "institutional design",
+                "EU institutions",
+                "European Parliament",
+                "Commission",
+                "Council",
+                "trilogue",
+                "delegated acts",
+                "implementing acts",
+                "enforcement",
+                "compliance",
+                "GDPR",
+                "DSA",
+                "DMA",
+                "AI Act",
+                "eIDAS"
+            ],
+            "must_include_signals": [
+                "clear causal story or mechanism",
+                "historical context or comparative frame",
+                "explicit sources or references"
+            ],
+            "avoid_signals": [
+                "pure ideology without mechanisms",
+                "hot takes without evidence"
+            ]
+        },
+        {
+            "id": "ai_ml_agents_rag_architecture",
+            "weight": 0.90,
+            "focus_ratio": { "design_architecture": 0.70, "hands_on_build": 0.30 },
+            "keywords": [
+                "agents",
+                "agentic workflows",
+                "RAG",
+                "retrieval",
+                "embeddings",
+                "vector database",
+                "reranking",
+                "evaluation",
+                "LLM systems",
+                "tool calling",
+                "MCP",
+                "guardrails",
+                "latency",
+                "cost",
+                "observability",
+                "grounding"
+            ],
+            "must_include_signals": [
+                "clear architecture/components",
+                "evaluation methodology or test plan",
+                "trade-offs (quality/latency/cost)"
+            ],
+            "avoid_signals": [
+                "marketing fluff",
+                "benchmarks without methodology"
+            ]
+        },
+        {
+            "id": "startups_product_leadership",
+            "weight": 0.85,
+            "primary_goal": "learn_how_to_become_and_operate_as_product_leader_or_founder",
+            "keywords": [
+                "startup",
+                "founder",
+                "product management",
+                "0 to 1",
+                "go-to-market",
+                "distribution",
+                "pricing",
+                "positioning",
+                "retention",
+                "growth loops",
+                "A/B testing",
+                "roadmap",
+                "strategy",
+                "team management",
+                "hiring",
+                "execution",
+                "discovery"
+            ],
+            "must_include_signals": [
+                "playbook or step-by-step",
+                "metrics or experiments",
+                "case study with outcomes"
+            ],
+            "avoid_signals": [
+                "motivation-only content",
+                "generic advice without context"
+            ]
+        },
+        {
+            "id": "software_engineering_system_design",
+            "weight": 0.88,
+            "keywords": [
+                "system design",
+                "distributed systems",
+                "architecture patterns",
+                "scalability",
+                "reliability",
+                "SRE",
+                "observability",
+                "API design",
+                "data modeling",
+                "event-driven",
+                "queues",
+                "caching",
+                "consistency",
+                "latency",
+                "availability",
+                "security basics"
+            ],
+            "must_include_signals": [
+                "explicit trade-offs",
+                "failure modes",
+                "operational guidance"
+            ],
+            "avoid_signals": [
+                "tool-only tutorials without reasoning"
+            ]
+        },
+        {
+            "id": "languages_en_fr_for_career",
+            "weight": 0.72,
+            "keywords": [
+                "English",
+                "business English",
+                "technical writing",
+                "policy writing",
+                "French",
+                "français",
+                "vocabulary",
+                "reading comprehension",
+                "B1",
+                "C1",
+                "EU terminology",
+                "briefing",
+                "memo",
+                "résumé",
+                "cover letter"
+            ],
+            "must_include_signals": [
+                "career-oriented language use",
+                "EU/policy/tech vocabulary",
+                "practice tasks with feedback"
+            ],
+            "avoid_signals": [
+                "language content unrelated to your domains"
+            ]
+        },
+        {
+            "id": "applied_math_prob_stats_opt_algo",
+            "weight": 0.65,
+            "keywords": [
+                "probability",
+                "statistics",
+                "Bayes",
+                "hypothesis testing",
+                "causal inference",
+                "regression",
+                "optimization",
+                "convex optimization",
+                "gradient descent",
+                "linear programming",
+                "dynamic programming",
+                "algorithms",
+                "time complexity",
+                "data structures",
+                "graph algorithms",
+                "randomized algorithms",
+                "math puzzles",
+                "olympiad problems"
+            ],
+            "must_include_signals": [
+                "reusable techniques",
+                "connection to other domains (ML, systems, policy, finance)",
+                "clear solution path and insight"
+            ],
+            "avoid_signals": [
+                "rote drill without insight"
+            ]
+        },
+        {
+            "id": "personal_finance_investing_econ",
+            "weight": 0.60,
+            "keywords": [
+                "budgeting",
+                "savings rate",
+                "emergency fund",
+                "inflation",
+                "asset allocation",
+                "risk management",
+                "index funds",
+                "bonds",
+                "cashflow",
+                "financial planning",
+                "macroeconomics",
+                "interest rates"
+            ],
+            "must_include_signals": [
+                "numbers and assumptions",
+                "risk framing",
+                "actionable steps"
+            ],
+            "avoid_signals": [
+                "get-rich-quick",
+                "guaranteed returns",
+                "high leverage hype"
+            ]
+        }
+    ],
+    "news_filtering": {
+        "mode": "fundamental_only",
+        "definition_of_fundamental": [
+            "Major institutional decisions or laws (especially EU) with real enforcement impact",
+            "Major geopolitical events that change incentives/alliances materially",
+            "Major AI/tech shifts that change architectures or capabilities (not minor launches)",
+            "Major economic regime changes (rates, crises) with broad second-order effects"
+        ],
+        "must_have_signals": [
+            "clear what changed",
+            "why it matters (2nd order effects)",
+            "credible sources"
+        ],
+        "hard_deprioritize_topics": [
+            "celebrity news",
+            "social media drama",
+            "minor product launches",
+            "speculation without confirmation"
+        ]
+    },
+    "noise_filters": {
+        "hard_exclude_keywords": [
+            "эзотерика",
+            "внутренняя энергия",
+            "астрология",
+            "нумерология",
+            "карма как механизм объяснения",
+            "магическое мышление",
+            "манифестация",
+            "закон притяжения",
+            "квантовое исцеление",
+            "биоэнергетика",
+            "родология",
+            "чакры",
+            "аура (в мистическом смысле)",
+            "псевдонаука"
+        ],
+        "soft_deprioritize_keywords": [
+            "успешный успех",
+            "быстрые деньги",
+            "сигналы",
+            "гарантированная доходность",
+            "мотивация без методики",
+            "top-10",
+            "hot take"
+        ],
+        "content_patterns_to_deprioritize": [
+            "claims without sources",
+            "unfalsifiable claims",
+            "overly long with low information density",
+            "salesy marketing tone"
+        ]
+    },
+    "scoring_hints_for_python": {
+        "base_score": 0.0,
+        "area_weight_multiplier": 1.0,
+        "keyword_match": {
+            "title_multiplier": 2.2,
+            "summary_multiplier": 1.3,
+            "body_multiplier": 1.0
+        },
+        "bonus_signals": {
+            "has_framework_or_checklist": 0.14,
+            "has_case_study": 0.12,
+            "has_tradeoffs": 0.10,
+            "has_primary_sources": 0.18,
+            "has_code_or_repro_steps": 0.10,
+            "en_or_fr_language_bonus": 0.08
+        },
+        "penalty_signals": {
+            "no_sources": -0.22,
+            "clickbait_title": -0.15,
+            "pure_opinion": -0.12,
+            "salesy_marketing": -0.18,
+            "pseudo_science": -1.0
+        },
+        "thresholds": {
+            "drop_below": 0.25,
+            "review_if_between": [0.25, 0.45],
+            "keep_if_above": 0.45
+        },
+        "final_score_clamp": [0.0, 1.0]
+    }
+}

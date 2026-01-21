@@ -1,0 +1,12 @@
+services:
+  inbox-agent:
+    build: .
+    container_name: inbox-agent-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Mount Obsidian vault - adjust the path on the left to your actual vault location
+      - /Users/ionko/Documents/my_vault/life/weekly:/vault/life/weekly
+    environment:
+      - OBSIDIAN_VAULT_PATH=/vault/life/weekly
