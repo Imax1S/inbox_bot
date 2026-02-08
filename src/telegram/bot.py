@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from uuid import uuid4
 
-from telegram import Bot, Update
+from telegram import BotCommand, Bot, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -407,11 +407,26 @@ class DigestBot:
 
     # ── Bot Setup ──
 
+    @staticmethod
+    async def _post_init(application: Application) -> None:
+        """Set bot commands so they appear in Telegram's command menu."""
+        await application.bot.set_my_commands([
+            BotCommand("start", "Show welcome message & help"),
+            BotCommand("generate", "Generate weekly digest now"),
+            BotCommand("items", "List this week's collected items"),
+            BotCommand("delete", "Remove an item by ID"),
+            BotCommand("status", "Show last pipeline run status"),
+            BotCommand("logs", "Show last pipeline run logs"),
+            BotCommand("cost", "Show token usage & cost report"),
+            BotCommand("week", "Current week info & stats"),
+        ])
+
     def build(self) -> Application:
         """Build and return the Telegram Application."""
         self.app = (
             Application.builder()
             .token(self.config.telegram.bot_token)
+            .post_init(self._post_init)
             .build()
         )
 
