@@ -94,24 +94,34 @@ class DigestAgent:
             Generated digest in Markdown format.
         """
         if not messages:
-            return "# Weekly Digest\n\nNo messages to process this week."
+            return (
+                "# thought mapper — Weekly Digest\n\n"
+                "На этой неделе нет сохранённых сообщений для дайджеста."
+            )
 
         # Format messages for the prompt
         messages_text = self._format_messages_for_prompt(messages)
         week_range = self._get_week_date_range(messages)
 
         # Create the user message
-        user_message = f"""Please process the following {len(messages)} saved messages and create a Weekly Digest.
+        user_message = f"""Собери дайджест «thought mapper — Weekly Digest» по {len(messages)} сохранённым сообщениям.
 
-Week: {week_range}
+Неделя: {week_range}
 
-## Messages:
+## Сообщения:
 
 {messages_text}
 
 ---
 
-Please generate a structured Weekly Digest based on these messages."""
+Требования:
+- Используй все материалы недели, ничего не выбрасывай; объединяй похожие сообщения в один смысловой блок.
+- Решай, что раскрывать подробнее, опираясь на профиль пользователя из системного промпта (интересы, цели, стиль). Более релевантные темы делай развернутыми, второстепенные — краткими заметками.
+- Каждый смысловой блок (даже из коротких сообщений) разворачивай минимум в 2–3 абзаца: 1) контекст/тезис, 2) разбор с деталями/примерами/рисками, 3) вывод/применение/следующие шаги. Не переписывай дословно, добавляй анализ и связи.
+- Добавляй навигацию и ссылки-наверх через Markdown anchors.
+- Для коротких knowledge queries (1–5 слов) давай объяснение на 2–4 предложения: причина → механизм → следствие/применение.
+- Добавляй оценку времени чтения для каждого блока; изображения опциональны через Markdown.
+- Язык — русский, кроме оригинальных цитат/терминов."""
 
         # Call the LLM
         response = await self.llm.generate(
