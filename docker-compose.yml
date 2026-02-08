@@ -8,5 +8,8 @@ services:
     volumes:
       # Mount Obsidian vault - adjust the path on the left to your actual vault location
       - /Users/ionko/Documents/my_vault/life/weekly:/vault/life/weekly
+      # Persist SQLite database
+      - ./data:/app/data
     environment:
       - OBSIDIAN_VAULT_PATH=/vault/life/weekly
+      - DB_PATH=/app/data/digest.db

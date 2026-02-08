@@ -40,6 +40,11 @@ env/
 # Docker
 *.log
 
+# Database
+data/*.db
+data/*.db-journal
+data/*.db-wal
+
 # OS
 .DS_Store
 Thumbs.db

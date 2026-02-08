@@ -11,8 +11,8 @@ COPY src/ ./src/
 COPY prompts/ ./prompts/
 COPY user_profile.json .
 
-# Create volume mount point for Obsidian vault
-RUN mkdir -p /vault
+# Create directories
+RUN mkdir -p /vault /app/data
 
 # Set Python path
 ENV PYTHONPATH=/app
