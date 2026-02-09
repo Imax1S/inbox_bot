@@ -45,7 +45,8 @@ src/
 │   ├── clusterer.py           # Groups items into 3-6 topic clusters
 │   ├── researcher.py          # Produces research briefs per cluster
 │   ├── writer.py              # Writes magazine-quality articles per cluster
-│   └── editor.py              # Assembles final weekly magazine
+│   ├── editor.py              # Assembles final weekly magazine
+│   └── translator.py          # Translates final magazine to user's chosen language
 ├── content/
 │   ├── text_classifier.py     # Regex-based message classification (ARTICLE/TOPIC_SEED/CONTEXT_NOTE)
 │   └── url_parser.py          # Fetches & extracts article text (readability-lxml + BS4 fallback)
@@ -59,7 +60,7 @@ src/
 │   ├── scheduler.py           # Weekly digest schedule (default: Sunday 23:00 Europe/Berlin)
 │   └── status_updater.py      # Real-time Telegram progress updates
 └── telegram/
-    └── bot.py                 # DigestBot: commands (/start, /generate, /items, /delete, /status, /logs, /cost, /week)
+    └── bot.py                 # DigestBot: commands (/start, /generate, /items, /delete, /language, /status, /logs, /cost, /week)
 
 prompts/                       # LLM system prompts (one .txt per agent)
 ├── collector.txt
@@ -67,6 +68,7 @@ prompts/                       # LLM system prompts (one .txt per agent)
 ├── researcher.txt
 ├── writer.txt
 ├── editor.txt
+├── translator.txt
 └── system_prompt.txt          # Legacy prompt (Russian)
 
 user_profile.json              # User interests, style prefs, language config (passed to agents)
@@ -87,6 +89,7 @@ data/                          # SQLite database storage (gitignored)
    - **Researcher** → produces research briefs per cluster (fills gaps)
    - **Writer** → writes magazine-quality article per cluster
    - **Editor** → assembles final Markdown document
+   - **Translator** → translates to user's language (conditional, skipped for English)
 7. `ObsidianWriter` saves output to vault as `YYYY-Www.md`
 8. User receives digest file in Telegram
 
@@ -107,13 +110,23 @@ Agent parameters:
 | Researcher | 0.7 | 2048 | Sonnet (fast) |
 | Writer | 0.8 | 2048-8192 | Opus (quality) |
 | Editor | 0.5 | 8192 | Opus (quality) |
+| Translator | 0.3 | 16384 | Sonnet (fast) |
+
+### Language & Translation
+
+The pipeline runs entirely in English for better LLM reasoning quality. Translation is an optional final step:
+- Users select their preferred language via `/language` (or `/lang`) with inline keyboard buttons
+- Preference is persisted in the `settings` table
+- If the selected language is not English, the `TranslatorAgent` translates the final magazine as Step 5
+- Currently supported: English, Russian
 
 ### Database Schema (SQLite)
 
-Three tables in `src/db/database.py`:
+Four tables in `src/db/database.py`:
 - **items** — collected messages (type, raw_content, source_url, extracted_text, summary, tags, language, week_id, status)
 - **pipeline_runs** — execution history (week_id, status, token totals, cost)
 - **step_logs** — per-agent logs (agent, model, tokens, duration, errors)
+- **settings** — key-value store for user preferences (e.g., `digest_language`)
 
 Indexes: `idx_items_week_id`, `idx_items_status`, `idx_step_logs_run_id`
 
@@ -137,6 +150,7 @@ All config is loaded via `src/config.py` from environment variables (`.env` file
 | `RESEARCHER_MODEL` | No | per-provider default | Override model for Researcher agent |
 | `WRITER_MODEL` | No | per-provider default | Override model for Writer agent |
 | `EDITOR_MODEL` | No | per-provider default | Override model for Editor agent |
+| `TRANSLATOR_MODEL` | No | per-provider default | Override model for Translator agent |
 | `SCHEDULE_ENABLED` | No | `true` | Enable weekly auto-generation |
 | `SCHEDULE_DAY` | No | `6` (Sunday) | Day of week (0=Mon, 6=Sun) |
 | `SCHEDULE_HOUR` | No | `23` | Hour for scheduled generation |
@@ -161,7 +175,7 @@ All config is loaded via `src/config.py` from environment variables (`.env` file
 ### File Conventions
 - Obsidian output: `YYYY-Www.md` format with YAML frontmatter
 - Database: SQLite with async access via aiosqlite
-- All agent outputs are JSON (parsed from LLM responses) except Writer (Markdown) and Researcher (plain text)
+- All agent outputs are JSON (parsed from LLM responses) except Writer (Markdown), Researcher (plain text), and Translator (Markdown)
 
 ### What NOT to Do
 - Never commit `.env` files or API keys
