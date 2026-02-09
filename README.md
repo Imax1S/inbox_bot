@@ -28,10 +28,16 @@ Telegram ──> Classify & Collect ──> SQLite
                                │   Editor     │  Assemble final digest
                                └──────┬──────┘
                                       v
+                               ┌─────────────┐
+                               │ Translator   │  Translate (if lang ≠ EN)
+                               └──────┬──────┘
+                                      v
                               Obsidian (YYYY-Www.md)
 ```
 
 Every agent extends `BaseAgent`, which handles prompt loading from `prompts/`, LLM calls, cost tracking, and step logging. Agents that need speed use Sonnet; agents that need quality use Opus.
+
+The entire pipeline runs in English for maximum LLM reasoning quality. If the user selects Russian via `/language`, the Translator agent converts the final magazine as the last step.
 
 ## Quick Start
 
@@ -55,6 +61,7 @@ python -m src.main
 | `/generate` | Run the digest pipeline now |
 | `/items` | List collected items |
 | `/delete` | Remove an item |
+| `/language` | Choose digest language (RU/EN) |
 | `/status` | Pipeline status |
 | `/logs` | Agent step logs |
 | `/cost` | Token usage and cost |
@@ -80,9 +87,9 @@ src/
 ├── main.py              # Entry point
 ├── config.py            # Config from .env + user_profile.json
 ├── obsidian_writer.py   # Writes digest to vault
-├── agents/              # BaseAgent + Collector, Clusterer, Researcher, Writer, Editor
+├── agents/              # BaseAgent + Collector, Clusterer, Researcher, Writer, Editor, Translator
 ├── content/             # Text classification & URL parsing
-├── db/                  # Async SQLite (items, pipeline_runs, step_logs)
+├── db/                  # Async SQLite (items, pipeline_runs, step_logs, settings)
 ├── llm/                 # LLMProvider protocol (Anthropic, OpenAI)
 ├── pipeline/            # Orchestrator, scheduler, status updates
 └── telegram/            # Bot commands & handlers
