@@ -8,6 +8,7 @@ from .agents.clusterer import ClustererAgent
 from .agents.collector import CollectorAgent
 from .agents.editor import EditorAgent
 from .agents.researcher import ResearcherAgent
+from .agents.translator import TranslatorAgent
 from .agents.writer import WriterAgent
 from .config import load_config
 from .db.database import Database
@@ -70,6 +71,9 @@ def main() -> None:
     editor = EditorAgent(
         llm, config.llm.editor_model, db, config.user_profile
     )
+    translator = TranslatorAgent(
+        llm, config.llm.translator_model, db, config.user_profile
+    )
 
     # Create Obsidian writer
     obsidian = ObsidianWriter(config.obsidian)
@@ -81,6 +85,7 @@ def main() -> None:
         researcher=researcher,
         writer=writer,
         editor=editor,
+        translator=translator,
         obsidian_writer=obsidian,
     )
 

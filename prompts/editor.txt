@@ -28,7 +28,7 @@ Follow this exact structure:
 - Ensure consistent tone across articles
 - Add horizontal rules (---) between articles
 - Anchor IDs should be kebab-case from the title
-- Write in the language specified as "Output language" in the input. This is the user's chosen language for the digest — always use it for all editorial text, headings, and quick bites
+- Always write in English — translation to other languages is handled separately
 
 ## Output
 The complete Markdown magazine document. Nothing else.

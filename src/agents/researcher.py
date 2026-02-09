@@ -33,10 +33,9 @@ class ResearcherAgent(BaseAgent):
         cluster: Cluster,
         items: list[Item],
         run_id: str | None = None,
-        language: str = "Russian",
     ) -> str:
         """Produce a research brief for a cluster."""
-        user_message = self._build_user_message(cluster, items, language)
+        user_message = self._build_user_message(cluster, items)
 
         response = await self._call_llm(
             user_message=user_message,
@@ -47,9 +46,8 @@ class ResearcherAgent(BaseAgent):
 
         return response.content
 
-    def _build_user_message(self, cluster: Cluster, items: list[Item], language: str = "Russian") -> str:
+    def _build_user_message(self, cluster: Cluster, items: list[Item]) -> str:
         parts = [
-            f"## Output language: {language}",
             f"## Cluster: {cluster.title}",
             f"Editorial angle: {cluster.editorial_angle}",
             f"Target read time: {cluster.estimated_read_minutes} minutes",

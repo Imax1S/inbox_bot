@@ -24,6 +24,7 @@ class LLMConfig:
     researcher_model: str
     writer_model: str
     editor_model: str
+    translator_model: str
 
 
 @dataclass
@@ -92,6 +93,7 @@ def load_config() -> Config:
             researcher_model=os.getenv("RESEARCHER_MODEL", default_fast),
             writer_model=os.getenv("WRITER_MODEL", default_quality),
             editor_model=os.getenv("EDITOR_MODEL", default_quality),
+            translator_model=os.getenv("TRANSLATOR_MODEL", default_fast),
         ),
         obsidian=ObsidianConfig(
             vault_path=Path(os.getenv("OBSIDIAN_VAULT_PATH", "/vault/life/weekly")),

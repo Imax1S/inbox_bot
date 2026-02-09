@@ -7,6 +7,7 @@ from uuid import uuid4
 from ..agents.clusterer import ClustererAgent
 from ..agents.editor import EditorAgent
 from ..agents.researcher import ResearcherAgent
+from ..agents.translator import TranslatorAgent
 from ..agents.writer import WriterAgent
 from ..db.database import Database
 from ..db.models import ItemStatus, PipelineRun, PipelineStatus
@@ -15,6 +16,11 @@ from ..obsidian_writer import ObsidianWriter
 from .status_updater import StatusUpdater
 
 logger = logging.getLogger(__name__)
+
+LANGUAGE_NAMES = {
+    "ru": "Russian",
+    "en": "English",
+}
 
 
 class Orchestrator:
@@ -25,6 +31,7 @@ class Orchestrator:
         researcher: ResearcherAgent,
         writer: WriterAgent,
         editor: EditorAgent,
+        translator: TranslatorAgent,
         obsidian_writer: ObsidianWriter,
     ):
         self.db = db
@@ -32,6 +39,7 @@ class Orchestrator:
         self.researcher = researcher
         self.writer = writer
         self.editor = editor
+        self.translator = translator
         self.obsidian_writer = obsidian_writer
 
     async def run(
@@ -64,10 +72,11 @@ class Orchestrator:
         total_input = 0
         total_output = 0
 
-        # Read user's language preference (default: Russian)
-        digest_language = await self.db.get_setting("digest_language", "ru")
-        lang_name = "Russian" if digest_language == "ru" else "English"
-        logger.info("Digest language: %s (%s)", digest_language, lang_name)
+        # Read user's language preference (default: English)
+        digest_language = await self.db.get_setting("digest_language", "en")
+        needs_translation = digest_language != "en"
+        lang_name = LANGUAGE_NAMES.get(digest_language, digest_language)
+        logger.info("Digest language: %s (translation needed: %s)", lang_name, needs_translation)
 
         try:
             # ── Step 1: Cluster ──
@@ -97,8 +106,7 @@ class Orchestrator:
                     item for item in items if item.id in cluster.item_ids
                 ]
                 briefs[cluster.id] = await self.researcher.process(
-                    cluster, cluster_items, run_id=run_id,
-                    language=lang_name,
+                    cluster, cluster_items, run_id=run_id
                 )
 
             # ── Step 3: Write ──
@@ -120,7 +128,6 @@ class Orchestrator:
                     cluster_items,
                     briefs[cluster.id],
                     run_id=run_id,
-                    language=lang_name,
                 )
 
             # ── Step 4: Edit & Assemble ──
@@ -141,8 +148,19 @@ class Orchestrator:
                 all_items=items,
                 week_id=week_id,
                 run_id=run_id,
-                language=lang_name,
             )
+
+            # ── Step 5: Translate (if needed) ──
+            if needs_translation:
+                if status_updater:
+                    await status_updater.update(4, f"Translating to {lang_name}...")
+                logger.info("Translating magazine to %s", lang_name)
+
+                magazine = await self.translator.process(
+                    magazine=magazine,
+                    target_language=lang_name,
+                    run_id=run_id,
+                )
 
             # ── Save & Finalize ──
             file_path = self.obsidian_writer.save_digest(magazine)
