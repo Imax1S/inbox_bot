@@ -37,10 +37,11 @@ class EditorAgent(BaseAgent):
         all_items: list[Item],
         week_id: str,
         run_id: str | None = None,
+        language: str = "Russian",
     ) -> str:
         """Assemble the final magazine from all articles."""
         user_message = self._build_user_message(
-            articles, cluster_result, quick_bites_items, all_items, week_id
+            articles, cluster_result, quick_bites_items, all_items, week_id, language
         )
 
         response = await self._call_llm(
@@ -59,6 +60,7 @@ class EditorAgent(BaseAgent):
         quick_bites_items: list[Item],
         all_items: list[Item],
         week_id: str,
+        language: str = "Russian",
     ) -> str:
         # Calculate date range from items
         if all_items:
@@ -77,6 +79,7 @@ class EditorAgent(BaseAgent):
         )
 
         parts = [
+            f"## Output language: {language}",
             f"## Metadata",
             f"Week: {week_id}",
             f"Date range: {date_range}",

@@ -34,9 +34,10 @@ class WriterAgent(BaseAgent):
         items: list[Item],
         research_brief: str,
         run_id: str | None = None,
+        language: str = "Russian",
     ) -> str:
         """Write an article for a cluster."""
-        user_message = self._build_user_message(cluster, items, research_brief)
+        user_message = self._build_user_message(cluster, items, research_brief, language)
 
         # Target word count based on read time (~250 words/minute)
         target_words = cluster.estimated_read_minutes * 250
@@ -56,8 +57,10 @@ class WriterAgent(BaseAgent):
         cluster: Cluster,
         items: list[Item],
         research_brief: str,
+        language: str = "Russian",
     ) -> str:
         parts = [
+            f"## Output language: {language}",
             f"## Topic: {cluster.title}",
             f"Editorial angle: {cluster.editorial_angle}",
             f"Target read time: {cluster.estimated_read_minutes} minutes (~{cluster.estimated_read_minutes * 250} words)",

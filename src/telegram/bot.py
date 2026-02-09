@@ -6,9 +6,10 @@ import logging
 from datetime import datetime
 from uuid import uuid4
 
-from telegram import BotCommand, Bot, Update
+from telegram import BotCommand, Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -137,6 +138,7 @@ class DigestBot:
             "/generate — Generate digest now\n"
             "/items — List this week's items\n"
             "/delete <id> — Remove an item\n"
+            "/language — Choose digest language\n"
             "/status — Pipeline status\n"
             "/logs — Last run's log\n"
             "/cost — Token usage & cost\n"
@@ -405,6 +407,60 @@ class DigestBot:
 
         await update.message.reply_text("\n".join(lines))
 
+    # ── Language Selection ──
+
+    LANGUAGE_LABELS = {
+        "ru": "🇷🇺 Русский",
+        "en": "🇬🇧 English",
+    }
+
+    async def _handle_language(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        current = await self.db.get_setting("digest_language", "ru")
+        current_label = self.LANGUAGE_LABELS.get(current, current)
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🇷🇺 Русский", callback_data="lang:ru"),
+                InlineKeyboardButton("🇬🇧 English", callback_data="lang:en"),
+            ]
+        ])
+
+        await update.message.reply_text(
+            f"🌐 Digest language: {current_label}\n\nChoose magazine language:",
+            reply_markup=keyboard,
+        )
+
+    async def _handle_language_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        query = update.callback_query
+        if not query or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await query.answer("Access denied.")
+            return
+
+        if not query.data or not query.data.startswith("lang:"):
+            return
+
+        lang = query.data.split(":", 1)[1]
+        if lang not in self.LANGUAGE_LABELS:
+            await query.answer("Unknown language.")
+            return
+
+        await self.db.set_setting("digest_language", lang)
+        label = self.LANGUAGE_LABELS[lang]
+        await query.answer(f"Language set to {label}")
+        await query.edit_message_text(f"✅ Digest language set to {label}")
+
     # ── Bot Setup ──
 
     @staticmethod
@@ -415,6 +471,7 @@ class DigestBot:
             BotCommand("generate", "Generate weekly digest now"),
             BotCommand("items", "List this week's collected items"),
             BotCommand("delete", "Remove an item by ID"),
+            BotCommand("language", "Choose digest language (RU/EN)"),
             BotCommand("status", "Show last pipeline run status"),
             BotCommand("logs", "Show last pipeline run logs"),
             BotCommand("cost", "Show token usage & cost report"),
@@ -438,6 +495,11 @@ class DigestBot:
         self.app.add_handler(CommandHandler("logs", self._handle_logs))
         self.app.add_handler(CommandHandler("cost", self._handle_cost))
         self.app.add_handler(CommandHandler("week", self._handle_week))
+        self.app.add_handler(CommandHandler("language", self._handle_language))
+        self.app.add_handler(CommandHandler("lang", self._handle_language))
+        self.app.add_handler(
+            CallbackQueryHandler(self._handle_language_callback, pattern=r"^lang:")
+        )
         # Also keep /digest as an alias for /generate
         self.app.add_handler(CommandHandler("digest", self._handle_generate))
         self.app.add_handler(

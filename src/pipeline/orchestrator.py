@@ -64,6 +64,11 @@ class Orchestrator:
         total_input = 0
         total_output = 0
 
+        # Read user's language preference (default: Russian)
+        digest_language = await self.db.get_setting("digest_language", "ru")
+        lang_name = "Russian" if digest_language == "ru" else "English"
+        logger.info("Digest language: %s (%s)", digest_language, lang_name)
+
         try:
             # ── Step 1: Cluster ──
             if status_updater:
@@ -92,7 +97,8 @@ class Orchestrator:
                     item for item in items if item.id in cluster.item_ids
                 ]
                 briefs[cluster.id] = await self.researcher.process(
-                    cluster, cluster_items, run_id=run_id
+                    cluster, cluster_items, run_id=run_id,
+                    language=lang_name,
                 )
 
             # ── Step 3: Write ──
@@ -114,6 +120,7 @@ class Orchestrator:
                     cluster_items,
                     briefs[cluster.id],
                     run_id=run_id,
+                    language=lang_name,
                 )
 
             # ── Step 4: Edit & Assemble ──
@@ -134,6 +141,7 @@ class Orchestrator:
                 all_items=items,
                 week_id=week_id,
                 run_id=run_id,
+                language=lang_name,
             )
 
             # ── Save & Finalize ──

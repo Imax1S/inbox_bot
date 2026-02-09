@@ -16,7 +16,7 @@ You are given a topic cluster with N source materials. Your job:
 - If sources conflict, note the disagreement and provide context for both sides
 - If a topic connects to the user's other interest areas, note those connections
 - Prefer mechanisms (how things work) and trade-offs over opinions
-- Write in the same language as the majority of the source materials
+- Write in the language specified as "Output language" in the input. This is the user's chosen language for the digest
 
 ## Output
 Write a structured research brief as plain text with clear sections. No JSON needed.
