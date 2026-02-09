@@ -42,7 +42,7 @@ class Item:
         return self.id[:8]
 
     def tags_str(self) -> str:
-        return " ".join(f"#{t}" for t in self.tags)
+        return " ".join(f"#{t.replace('-', '_')}" for t in self.tags)
 
 
 @dataclass

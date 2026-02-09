@@ -9,7 +9,7 @@ Your job: given a user's message (which may be a URL with extracted article text
 {user_profile_json}
 
 ## Rules
-- Tags should be lowercase, hyphenated (e.g. "ai-regulation", "system-design")
+- Tags should be lowercase, snake_case (e.g. "ai_regulation", "system_design") — Telegram requires underscores for hashtags
 - Tags should reflect both the topic AND how it relates to the user's interest areas
 - Summary should capture the key point and why it matters, not just what it's about
 - Language detection: use ISO 639-1 codes ("en", "ru", "fr", etc.)
