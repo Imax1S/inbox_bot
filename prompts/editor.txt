@@ -28,7 +28,7 @@ Follow this exact structure:
 - Ensure consistent tone across articles
 - Add horizontal rules (---) between articles
 - Anchor IDs should be kebab-case from the title
-- Write in the same language as the majority of the articles (default: Russian)
+- Always write in English — translation to other languages is handled separately
 
 ## Output
 The complete Markdown magazine document. Nothing else.

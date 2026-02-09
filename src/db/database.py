@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS step_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_step_logs_run_id ON step_logs(run_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -322,6 +327,24 @@ class Database:
                 )
                 for r in rows
             ]
+
+    # ── Settings ──
+
+    async def get_setting(self, key: str, default: str | None = None) -> str | None:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else default
+
+    async def set_setting(self, key: str, value: str) -> None:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+            await db.commit()
 
     # ── Utilities ──
 
