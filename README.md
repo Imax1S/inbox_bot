@@ -35,7 +35,7 @@ Telegram ──> Classify & Collect ──> SQLite
                               Obsidian (YYYY-Www.md)
 ```
 
-Every agent extends `BaseAgent`, which handles prompt loading from `prompts/`, LLM calls, cost tracking, and step logging. Agents that need speed use Sonnet; agents that need quality use Opus. The pipeline runs entirely in English for better LLM reasoning quality, with an optional translation step at the end.
+Every agent extends `BaseAgent`, which handles prompt loading from `prompts/`, LLM calls, cost tracking, and step logging. All agents use Sonnet by default for the best cost/quality balance. The pipeline runs entirely in English for better LLM reasoning quality, with an optional translation step at the end.
 
 ## Quick Start
 
@@ -63,6 +63,8 @@ python -m src.main
 | `/status` | Pipeline status |
 | `/logs` | Agent step logs |
 | `/cost` | Token usage and cost |
+| `/estimate` | Predict generation cost before running |
+| `/provider` | Switch LLM provider (Anthropic/OpenAI) |
 | `/week` | Current week info |
 
 ## Tech Stack

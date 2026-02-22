@@ -100,9 +100,14 @@ PRICING = {
     # Anthropic
     "claude-sonnet-4-5-20250929": {"input": 3.0, "output": 15.0},
     "claude-opus-4-6": {"input": 15.0, "output": 75.0},
+    "claude-haiku-3-5-20241022": {"input": 0.80, "output": 4.0},
     # OpenAI
     "gpt-4o": {"input": 2.5, "output": 10.0},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "gpt-4.1": {"input": 2.0, "output": 8.0},
+    "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
+    "gpt-4.1-nano": {"input": 0.10, "output": 0.40},
+    "gpt-5": {"input": 1.25, "output": 10.0},
 }
 
 
