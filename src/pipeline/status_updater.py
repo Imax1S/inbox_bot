@@ -8,7 +8,8 @@ from telegram import Bot
 
 logger = logging.getLogger(__name__)
 
-STEP_NAMES = ["Clustering", "Researching", "Writing", "Assembling"]
+BASE_STEPS = ["Clustering", "Researching", "Writing", "Assembling"]
+TRANSLATION_STEP = "Translating"
 STEP_ICONS = {"done": "✅", "active": "🔄", "pending": "⬜"}
 
 # Minimum interval between message edits (Telegram rate limit protection)
@@ -25,13 +26,19 @@ class StatusUpdater:
         self.current_step: int = -1
         self.detail: str = ""
         self._last_edit_time: float = 0
+        self.steps: list[str] = list(BASE_STEPS)
 
-    async def start(self, week_id: str, item_count: int) -> None:
+    async def start(
+        self, week_id: str, item_count: int, needs_translation: bool = False,
+    ) -> None:
         """Send the initial status message."""
         self.week_id = week_id
         self.item_count = item_count
         self.current_step = -1
         self.detail = ""
+        self.steps = list(BASE_STEPS)
+        if needs_translation:
+            self.steps.append(TRANSLATION_STEP)
 
         text = self._render()
         try:
@@ -51,7 +58,7 @@ class StatusUpdater:
 
     async def finish(self, result_path: str | None = None) -> None:
         """Mark the pipeline as complete."""
-        self.current_step = len(STEP_NAMES)
+        self.current_step = len(self.steps)
         self.detail = (
             f"Saved to: {result_path}" if result_path else "Complete"
         )
@@ -70,11 +77,11 @@ class StatusUpdater:
         ]
 
         # Progress bar
-        total = len(STEP_NAMES)
+        total = len(self.steps)
         filled = min(self.current_step + 1, total) if self.current_step >= 0 else 0
         bar = "▰" * filled + "▱" * (total - filled)
         if 0 <= self.current_step < total:
-            lines.append(f"{bar} Step {self.current_step + 1}/{total}: {STEP_NAMES[self.current_step]}")
+            lines.append(f"{bar} Step {self.current_step + 1}/{total}: {self.steps[self.current_step]}")
         elif self.current_step >= total:
             lines.append(f"{bar} Complete!")
         else:
@@ -83,7 +90,7 @@ class StatusUpdater:
         lines.append("")
 
         # Step status list
-        for i, name in enumerate(STEP_NAMES):
+        for i, name in enumerate(self.steps):
             if i < self.current_step:
                 icon = STEP_ICONS["done"]
             elif i == self.current_step:

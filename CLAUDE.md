@@ -60,7 +60,7 @@ src/
 │   ├── scheduler.py           # Weekly digest schedule (default: Sunday 23:00 Europe/Berlin)
 │   └── status_updater.py      # Real-time Telegram progress updates
 └── telegram/
-    └── bot.py                 # DigestBot: commands (/start, /generate, /items, /delete, /language, /status, /logs, /cost, /week)
+    └── bot.py                 # DigestBot: commands (/start, /generate, /items, /delete, /language, /status, /logs, /cost, /week, /provider, /estimate)
 
 prompts/                       # LLM system prompts (one .txt per agent)
 ├── collector.txt
@@ -108,8 +108,8 @@ Agent parameters:
 | Collector | 0.3 | 1024 | Sonnet (fast) |
 | Clusterer | 0.3 | 2048 | Sonnet (fast) |
 | Researcher | 0.7 | 2048 | Sonnet (fast) |
-| Writer | 0.8 | 2048-8192 | Opus (quality) |
-| Editor | 0.5 | 8192 | Opus (quality) |
+| Writer | 0.8 | 2048-8192 | Sonnet (fast) |
+| Editor | 0.5 | 8192 | Sonnet (fast) |
 | Translator | 0.3 | 16384 | Sonnet (fast) |
 
 ### Language & Translation
@@ -159,8 +159,8 @@ All config is loaded via `src/config.py` from environment variables (`.env` file
 
 ### Default Models
 
-- **Anthropic:** `claude-sonnet-4-5-20250929` (fast), `claude-opus-4-6` (quality)
-- **OpenAI:** `gpt-4o` for all agents
+- **Anthropic:** `claude-sonnet-4-5-20250929` for all agents
+- **OpenAI:** `gpt-4.1-mini` (fast), `gpt-4.1` (quality)
 
 ## Key Conventions
 
