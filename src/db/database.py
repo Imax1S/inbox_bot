@@ -277,6 +277,29 @@ class Database:
                     steps=steps,
                 )
 
+    async def get_recent_runs(self, limit: int = 5) -> list[PipelineRun]:
+        """Get recent pipeline runs (summary only, without step logs)."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM pipeline_runs ORDER BY started_at DESC LIMIT ?",
+                (limit,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [
+                    PipelineRun(
+                        id=row["id"],
+                        week_id=row["week_id"],
+                        started_at=_str_to_dt(row["started_at"]),
+                        finished_at=_str_to_dt(row["finished_at"]) if row["finished_at"] else None,
+                        status=PipelineStatus(row["status"]),
+                        total_input_tokens=row["total_input_tokens"],
+                        total_output_tokens=row["total_output_tokens"],
+                        estimated_cost_usd=row["estimated_cost_usd"],
+                    )
+                    for row in rows
+                ]
+
     # ── Step Logs ──
 
     async def save_step_log(self, step: StepLog) -> None:
