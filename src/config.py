@@ -56,6 +56,14 @@ class Config:
     db_path: Path
 
 
+def get_provider_defaults(provider: str) -> tuple[str, str]:
+    """Return (default_fast, default_quality) model names for a provider."""
+    if provider == "openai":
+        return ("gpt-4.1-mini", "gpt-4.1")
+    else:  # anthropic
+        return ("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-20250929")
+
+
 def load_config() -> Config:
     """Load configuration from environment variables and files."""
     load_dotenv()
@@ -73,12 +81,7 @@ def load_config() -> Config:
     provider = os.getenv("LLM_PROVIDER", "anthropic").lower()
 
     # Default models per provider
-    if provider == "openai":
-        default_fast = "gpt-4o"
-        default_quality = "gpt-4o"
-    else:
-        default_fast = "claude-sonnet-4-5-20250929"
-        default_quality = "claude-opus-4-6"
+    default_fast, default_quality = get_provider_defaults(provider)
 
     # DB path
     db_path = Path(os.getenv("DB_PATH", str(project_root / "data" / "digest.db")))

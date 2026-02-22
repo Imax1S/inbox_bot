@@ -18,14 +18,20 @@ from telegram.ext import (
     filters,
 )
 
+from ..agents.clusterer import ClustererAgent
 from ..agents.collector import CollectorAgent
+from ..agents.editor import EditorAgent
+from ..agents.filter import FilterAgent
 from ..agents.profiler import ProfilerAgent
-from ..config import Config
+from ..agents.researcher import ResearcherAgent
+from ..agents.translator import TranslatorAgent
+from ..agents.writer import WriterAgent
+from ..config import Config, get_provider_defaults
 from ..content.text_classifier import classify_message
 from ..content.url_parser import fetch_and_extract
 from ..db.database import Database
 from ..db.models import Item, ItemStatus, ItemType
-from ..llm.provider import estimate_cost
+from ..llm.provider import create_provider, estimate_cost
 from ..pipeline.orchestrator import Orchestrator
 from ..pipeline.status_updater import StatusUpdater
 
@@ -181,9 +187,11 @@ class DigestBot:
             "/delete <id> — Remove an item\n"
             "/setup — Configure your interest profile\n"
             "/language — Choose digest language\n"
+            "/provider — Switch LLM provider\n"
+            "/estimate — Estimate generation cost\n"
             "/status — Pipeline status\n"
             "/logs — Last run's log\n"
-            "/cost — Token usage & cost\n"
+            "/cost — Token usage & cost report\n"
             "/week — Current week info\n"
         )
 
@@ -317,15 +325,53 @@ class DigestBot:
         }
         icon = status_icon.get(last_run.status.value, "❓")
 
-        await update.message.reply_text(
-            f"{icon} Last run: {last_run.week_id}\n"
-            f"Status: {last_run.status.value}\n"
-            f"Started: {last_run.started_at.strftime('%Y-%m-%d %H:%M')}"
-            f"{duration}\n"
+        # Determine models used from step logs
+        models_used = set()
+        if last_run.steps:
+            models_used = {s.llm_model for s in last_run.steps}
+
+        lines = [
+            f"{icon} Last run: {last_run.week_id}",
+            f"Status: {last_run.status.value}",
+            f"Started: {last_run.started_at.strftime('%Y-%m-%d %H:%M')}{duration}",
+            f"Provider: {self.config.llm.provider}",
+        ]
+        if models_used:
+            lines.append(f"Models: {', '.join(sorted(models_used))}")
+
+        lines.append("")
+        lines.append(
             f"Tokens: {last_run.total_input_tokens:,} in / "
-            f"{last_run.total_output_tokens:,} out\n"
-            f"Cost: ${last_run.estimated_cost_usd:.4f}"
+            f"{last_run.total_output_tokens:,} out"
         )
+        lines.append(f"Cost: ${last_run.estimated_cost_usd:.4f}")
+
+        # Per-agent summary from step logs
+        if last_run.steps:
+            agent_stats: dict[str, dict] = {}
+            for step in last_run.steps:
+                name = step.agent
+                if name not in agent_stats:
+                    agent_stats[name] = {
+                        "calls": 0, "input": 0, "output": 0, "cost": 0.0
+                    }
+                agent_stats[name]["calls"] += 1
+                agent_stats[name]["input"] += step.input_tokens
+                agent_stats[name]["output"] += step.output_tokens
+                agent_stats[name]["cost"] += estimate_cost(
+                    step.llm_model, step.input_tokens, step.output_tokens
+                )
+
+            lines.append("\nPer-agent:")
+            for agent, stats in agent_stats.items():
+                call_str = f" x{stats['calls']}" if stats['calls'] > 1 else ""
+                lines.append(
+                    f"  {agent}{call_str}: "
+                    f"{stats['input']:,}+{stats['output']:,} tok "
+                    f"${stats['cost']:.4f}"
+                )
+
+        await update.message.reply_text("\n".join(lines))
 
     async def _handle_logs(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -401,19 +447,48 @@ class DigestBot:
         total_cost = 0.0
 
         if last_run.steps:
+            # Group steps by agent
+            agent_groups: dict[str, list] = {}
             for step in last_run.steps:
-                cost = estimate_cost(
-                    step.llm_model, step.input_tokens, step.output_tokens
+                if step.agent not in agent_groups:
+                    agent_groups[step.agent] = []
+                agent_groups[step.agent].append(step)
+
+            for agent, steps in agent_groups.items():
+                model = steps[0].llm_model
+                total_in = sum(s.input_tokens for s in steps)
+                total_out = sum(s.output_tokens for s in steps)
+                cost = sum(
+                    estimate_cost(s.llm_model, s.input_tokens, s.output_tokens)
+                    for s in steps
                 )
                 total_cost += cost
-                lines.append(
-                    f"  {step.agent} ({step.llm_model}): "
-                    f"{step.input_tokens + step.output_tokens:,} tokens — "
-                    f"${cost:.4f}"
-                )
 
-        lines.append(f"\nTotal tokens: {last_run.total_input_tokens + last_run.total_output_tokens:,}")
+                call_str = f" x{len(steps)}" if len(steps) > 1 else ""
+                lines.append(f"  {agent}{call_str} ({model})")
+                lines.append(
+                    f"    {total_in:,} in + {total_out:,} out = "
+                    f"{total_in + total_out:,} tok"
+                )
+                lines.append(f"    ${cost:.4f}")
+
+        lines.append(
+            f"\nTotal: {last_run.total_input_tokens:,} in / "
+            f"{last_run.total_output_tokens:,} out"
+        )
         lines.append(f"Total cost: ${total_cost:.4f}")
+
+        # History of recent runs
+        recent_runs = await self.db.get_recent_runs(limit=5)
+        if len(recent_runs) > 1:
+            lines.append("\n📜 Recent runs:")
+            for run in recent_runs:
+                status_ch = "✅" if run.status.value == "COMPLETED" else "❌"
+                lines.append(
+                    f"  {status_ch} {run.week_id} — "
+                    f"${run.estimated_cost_usd:.4f} "
+                    f"({run.total_input_tokens + run.total_output_tokens:,} tok)"
+                )
 
         await update.message.reply_text("\n".join(lines))
 
@@ -448,6 +523,199 @@ class DigestBot:
                 lines.append(f"  📝 Notes: {type_counts['CONTEXT_NOTE']}")
 
         await update.message.reply_text("\n".join(lines))
+
+    # ── Cost Estimation ──
+
+    async def _handle_estimate(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        week_id = Database.current_week_id()
+        items = await self.db.get_items_by_week(week_id, status=ItemStatus.COLLECTED)
+
+        if not items:
+            await update.message.reply_text(
+                f"No collected items for {week_id}. Nothing to estimate."
+            )
+            return
+
+        n_items = len(items)
+        n_clusters = min(6, max(1, n_items // 3))
+
+        digest_language = await self.db.get_setting("digest_language", "en")
+        needs_translation = digest_language != "en"
+
+        # Static token estimates per agent call (input, output, num_calls)
+        estimates = {
+            "clusterer": (1500, 500, 1),
+            "researcher": (2000, 800, n_clusters),
+            "writer": (3000, 1500, n_clusters),
+            "editor": (1500 * n_clusters + 1000, 3000, 1),
+        }
+        if needs_translation:
+            estimates["translator"] = (4000, 4000, 1)
+
+        models = {
+            "clusterer": self.config.llm.clusterer_model,
+            "researcher": self.config.llm.researcher_model,
+            "writer": self.config.llm.writer_model,
+            "editor": self.config.llm.editor_model,
+            "translator": self.config.llm.translator_model,
+        }
+
+        total_cost = 0.0
+        lines = [
+            f"📊 Cost Estimate — {week_id}\n",
+            f"Items: {n_items}",
+            f"Est. clusters: ~{n_clusters}",
+            f"Provider: {self.config.llm.provider}",
+            f"Translation: {'yes' if needs_translation else 'no'}\n",
+        ]
+
+        for agent, (inp, out, calls) in estimates.items():
+            total_inp = inp * calls
+            total_out = out * calls
+            model = models[agent]
+            cost = estimate_cost(model, total_inp, total_out)
+            total_cost += cost
+
+            call_str = f" x{calls}" if calls > 1 else ""
+            lines.append(f"  {agent}{call_str}: ~${cost:.4f}")
+
+        lines.append(f"\nEstimated total: ~${total_cost:.4f}")
+
+        await update.message.reply_text("\n".join(lines))
+
+    # ── Provider Selection ──
+
+    PROVIDER_LABELS = {
+        "anthropic": "Anthropic (Claude)",
+        "openai": "OpenAI (GPT)",
+    }
+
+    async def _handle_provider(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        current = self.config.llm.provider
+        current_label = self.PROVIDER_LABELS.get(current, current)
+        default_fast, default_quality = get_provider_defaults(current)
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🟣 Anthropic", callback_data="provider:anthropic"
+                ),
+                InlineKeyboardButton(
+                    "🟢 OpenAI", callback_data="provider:openai"
+                ),
+            ]
+        ])
+
+        await update.message.reply_text(
+            f"🔧 LLM Provider: {current_label}\n"
+            f"Fast model: {default_fast}\n"
+            f"Quality model: {default_quality}\n\n"
+            f"Choose provider:",
+            reply_markup=keyboard,
+        )
+
+    async def _handle_provider_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        query = update.callback_query
+        if not query or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await query.answer("Access denied.")
+            return
+
+        if not query.data or not query.data.startswith("provider:"):
+            return
+
+        provider_name = query.data.split(":", 1)[1]
+        if provider_name not in self.PROVIDER_LABELS:
+            await query.answer("Unknown provider.")
+            return
+
+        if provider_name == self.config.llm.provider:
+            await query.answer("Already using this provider.")
+            return
+
+        try:
+            result = await self._reinit_provider(provider_name)
+            await query.answer(f"Switched to {provider_name}")
+            await query.edit_message_text(f"✅ Switched to {result}")
+        except ValueError as e:
+            await query.answer(str(e))
+            await query.edit_message_text(f"❌ {e}")
+
+    async def _reinit_provider(self, provider_name: str) -> str:
+        """Hot-reload the LLM provider and re-create all agents."""
+        if provider_name in ("anthropic", "claude"):
+            api_key = self.config.llm.anthropic_api_key
+            provider_name = "anthropic"
+        elif provider_name == "openai":
+            api_key = self.config.llm.openai_api_key
+        else:
+            raise ValueError(f"Unknown provider: {provider_name}")
+
+        if not api_key:
+            raise ValueError(f"No API key configured for {provider_name}")
+
+        llm = create_provider(provider_name, api_key)
+        default_fast, default_quality = get_provider_defaults(provider_name)
+
+        # Update config
+        self.config.llm.provider = provider_name
+        self.config.llm.collector_model = default_fast
+        self.config.llm.clusterer_model = default_fast
+        self.config.llm.researcher_model = default_fast
+        self.config.llm.writer_model = default_quality
+        self.config.llm.editor_model = default_quality
+        self.config.llm.translator_model = default_fast
+
+        # Re-create collector (used directly by bot)
+        self.collector = CollectorAgent(
+            llm, default_fast, self.db, self.config.user_profile
+        )
+
+        # Re-create orchestrator's agents
+        self.orchestrator.clusterer = ClustererAgent(
+            llm, default_fast, self.db, self.config.user_profile
+        )
+        self.orchestrator.researcher = ResearcherAgent(
+            llm, default_fast, self.db, self.config.user_profile
+        )
+        self.orchestrator.writer = WriterAgent(
+            llm, default_quality, self.db, self.config.user_profile
+        )
+        self.orchestrator.editor = EditorAgent(
+            llm, default_quality, self.db, self.config.user_profile
+        )
+        self.orchestrator.translator = TranslatorAgent(
+            llm, default_fast, self.db, self.config.user_profile
+        )
+        if self.orchestrator.filter_agent:
+            self.orchestrator.filter_agent = FilterAgent(
+                llm, default_fast, self.db, self.config.user_profile
+            )
+
+        # Persist preference
+        await self.db.set_setting("llm_provider", provider_name)
+
+        label = self.PROVIDER_LABELS.get(provider_name, provider_name)
+        return f"{label}\nFast: {default_fast}\nQuality: {default_quality}"
 
     # ── Language Selection ──
 
@@ -789,6 +1057,8 @@ class DigestBot:
             BotCommand("delete", "Remove an item by ID"),
             BotCommand("setup", "Configure your interest profile"),
             BotCommand("language", "Choose digest language (RU/EN)"),
+            BotCommand("provider", "Switch LLM provider"),
+            BotCommand("estimate", "Estimate generation cost"),
             BotCommand("status", "Show last pipeline run status"),
             BotCommand("logs", "Show last pipeline run logs"),
             BotCommand("cost", "Show token usage & cost report"),
@@ -839,6 +1109,13 @@ class DigestBot:
         self.app.add_handler(CommandHandler("logs", self._handle_logs))
         self.app.add_handler(CommandHandler("cost", self._handle_cost))
         self.app.add_handler(CommandHandler("week", self._handle_week))
+        self.app.add_handler(CommandHandler("estimate", self._handle_estimate))
+        self.app.add_handler(CommandHandler("provider", self._handle_provider))
+        self.app.add_handler(
+            CallbackQueryHandler(
+                self._handle_provider_callback, pattern=r"^provider:"
+            )
+        )
         self.app.add_handler(CommandHandler("language", self._handle_language))
         self.app.add_handler(CommandHandler("lang", self._handle_language))
         self.app.add_handler(

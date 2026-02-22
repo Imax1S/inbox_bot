@@ -69,9 +69,6 @@ class Orchestrator:
         )
         await self.db.save_pipeline_run(run)
 
-        if status_updater:
-            await status_updater.start(week_id, len(items))
-
         total_input = 0
         total_output = 0
 
@@ -80,6 +77,9 @@ class Orchestrator:
         needs_translation = digest_language != "en"
         lang_name = LANGUAGE_NAMES.get(digest_language, digest_language)
         logger.info("Digest language: %s (translation needed: %s)", lang_name, needs_translation)
+
+        if status_updater:
+            await status_updater.start(week_id, len(items), needs_translation=needs_translation)
 
         # Track filtered items for user notification
         filter_report: list[dict] = []

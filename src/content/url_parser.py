@@ -1,6 +1,7 @@
 """Fetch and extract article content from URLs."""
 
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
@@ -12,6 +13,63 @@ USER_AGENT = (
     "Mozilla/5.0 (compatible; DigestBot/1.0; +https://github.com/inbox-agent-bot)"
 )
 
+_TWITTER_DOMAINS = {"twitter.com", "x.com", "mobile.twitter.com", "mobile.x.com"}
+_TWITTER_OEMBED_URL = "https://publish.twitter.com/oembed"
+
+
+def _is_twitter_url(url: str) -> bool:
+    """Return True if the URL points to twitter.com or x.com."""
+    try:
+        host = urlparse(url).netloc.lower().lstrip("www.")
+        return host in _TWITTER_DOMAINS
+    except Exception:
+        return False
+
+
+async def _fetch_twitter_oembed(url: str) -> tuple[str | None, str | None]:
+    """Extract tweet text via Twitter's free oEmbed API (no auth required).
+
+    Returns (extracted_text, error_message).
+    """
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=FETCH_TIMEOUT) as client:
+            resp = await client.get(
+                _TWITTER_OEMBED_URL,
+                params={"url": url, "omit_script": "true"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.warning("Twitter oEmbed request failed for %s: %s", url, e)
+        return None, f"Could not fetch tweet: {e}"
+
+    html = data.get("html", "")
+    author_name = data.get("author_name", "unknown")
+    author_url = data.get("author_url", "")
+
+    # Extract handle from author URL (e.g. https://twitter.com/elonmusk → @elonmusk)
+    handle = ""
+    if author_url:
+        path = urlparse(author_url).path.strip("/")
+        if path:
+            handle = f"@{path}"
+
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+        blockquote = soup.find("blockquote")
+        if blockquote:
+            p = blockquote.find("p")
+            if p:
+                tweet_text = p.get_text(separator=" ", strip=True)
+                author_line = f"{author_name} ({handle})" if handle else author_name
+                return f"Tweet by {author_line}:\n\n{tweet_text}", None
+    except Exception as e:
+        logger.debug("Failed to parse oEmbed HTML: %s", e)
+
+    return None, "Could not parse tweet content"
+
 
 async def fetch_and_extract(url: str) -> tuple[str | None, str | None]:
     """Fetch a URL and extract article text.
@@ -20,6 +78,11 @@ async def fetch_and_extract(url: str) -> tuple[str | None, str | None]:
     If extraction succeeds, error_message is None.
     If it fails, extracted_text may still contain partial content.
     """
+    # Twitter/X.com requires special handling — regular HTTP gives empty JS shell
+    if _is_twitter_url(url):
+        logger.debug("Detected Twitter/X URL, using oEmbed: %s", url)
+        return await _fetch_twitter_oembed(url)
+
     try:
         html = await _fetch_html(url)
     except Exception as e:
