@@ -7,10 +7,12 @@ import sys
 from .agents.clusterer import ClustererAgent
 from .agents.collector import CollectorAgent
 from .agents.editor import EditorAgent
+from .agents.filter import FilterAgent
+from .agents.profiler import ProfilerAgent
 from .agents.researcher import ResearcherAgent
 from .agents.translator import TranslatorAgent
 from .agents.writer import WriterAgent
-from .config import get_provider_defaults, load_config
+from .config import get_provider_defaults, get_user_profile, load_config
 from .db.database import Database
 from .llm.provider import create_provider
 from .obsidian_writer import ObsidianWriter
@@ -27,9 +29,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def init_and_resolve_provider(db: Database, config) -> str:
-    """Initialize DB and resolve provider from settings (overrides .env)."""
+async def init_db_and_settings(db: Database, config, file_profile: dict) -> tuple[str, dict]:
+    """Initialize DB, resolve provider from settings, load user profile.
+
+    Returns (provider_name, user_profile).
+    """
     await db.init()
+
+    # Resolve provider from saved settings
     saved_provider = await db.get_setting("llm_provider")
     if saved_provider and saved_provider != config.llm.provider:
         logger.info(
@@ -45,7 +52,11 @@ async def init_and_resolve_provider(db: Database, config) -> str:
         config.llm.writer_model = default_quality
         config.llm.editor_model = default_quality
         config.llm.translator_model = default_fast
-    return config.llm.provider
+
+    # Load user profile (DB > file fallback)
+    user_profile = await get_user_profile(db, file_profile)
+
+    return config.llm.provider, user_profile
 
 
 def main() -> None:
@@ -58,13 +69,17 @@ def main() -> None:
     logger.info("Vault: %s", config.obsidian.vault_path)
     logger.info("DB: %s", config.db_path)
 
-    # Initialize database and resolve provider from saved settings
+    # Initialize database, resolve provider, load user profile
     db = Database(config.db_path)
-    provider = asyncio.get_event_loop().run_until_complete(
-        init_and_resolve_provider(db, config)
+    provider, user_profile = asyncio.get_event_loop().run_until_complete(
+        init_db_and_settings(db, config, config.user_profile)
     )
     logger.info("Provider: %s", provider)
     logger.info("Database initialized")
+    logger.info(
+        "User profile loaded: %d interest areas",
+        len(user_profile.get("interest_areas", [])),
+    )
 
     # Create LLM provider
     if config.llm.provider in ("anthropic", "claude"):
@@ -76,22 +91,28 @@ def main() -> None:
 
     # Create agents
     collector = CollectorAgent(
-        llm, config.llm.collector_model, db, config.user_profile
+        llm, config.llm.collector_model, db, user_profile
     )
     clusterer = ClustererAgent(
-        llm, config.llm.clusterer_model, db, config.user_profile
+        llm, config.llm.clusterer_model, db, user_profile
     )
     researcher = ResearcherAgent(
-        llm, config.llm.researcher_model, db, config.user_profile
+        llm, config.llm.researcher_model, db, user_profile
     )
     writer = WriterAgent(
-        llm, config.llm.writer_model, db, config.user_profile
+        llm, config.llm.writer_model, db, user_profile
     )
     editor = EditorAgent(
-        llm, config.llm.editor_model, db, config.user_profile
+        llm, config.llm.editor_model, db, user_profile
     )
     translator = TranslatorAgent(
-        llm, config.llm.translator_model, db, config.user_profile
+        llm, config.llm.translator_model, db, user_profile
+    )
+    profiler = ProfilerAgent(
+        llm, config.llm.profiler_model, db
+    )
+    filter_agent = FilterAgent(
+        llm, config.llm.filter_model, db, user_profile
     )
 
     # Create Obsidian writer
@@ -106,6 +127,7 @@ def main() -> None:
         editor=editor,
         translator=translator,
         obsidian_writer=obsidian,
+        filter_agent=filter_agent,
     )
 
     # Create bot
@@ -114,6 +136,7 @@ def main() -> None:
         db=db,
         collector=collector,
         orchestrator=orchestrator,
+        profiler=profiler,
     )
 
     # Build the application

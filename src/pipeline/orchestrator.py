@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from ..agents.clusterer import ClustererAgent
 from ..agents.editor import EditorAgent
+from ..agents.filter import FilterAgent
 from ..agents.researcher import ResearcherAgent
 from ..agents.translator import TranslatorAgent
 from ..agents.writer import WriterAgent
@@ -33,6 +34,7 @@ class Orchestrator:
         editor: EditorAgent,
         translator: TranslatorAgent,
         obsidian_writer: ObsidianWriter,
+        filter_agent: FilterAgent | None = None,
     ):
         self.db = db
         self.clusterer = clusterer
@@ -41,6 +43,7 @@ class Orchestrator:
         self.editor = editor
         self.translator = translator
         self.obsidian_writer = obsidian_writer
+        self.filter_agent = filter_agent
 
     async def run(
         self,
@@ -78,10 +81,55 @@ class Orchestrator:
         if status_updater:
             await status_updater.start(week_id, len(items), needs_translation=needs_translation)
 
+        # Track filtered items for user notification
+        filter_report: list[dict] = []
+
         try:
+            # ── Step 0: Filter (if filter agent is configured) ──
+            if self.filter_agent:
+                if status_updater:
+                    await status_updater.update(0, f"Filtering {len(items)} items...")
+                logger.info("Filtering %d items for %s", len(items), week_id)
+
+                filter_result = await self.filter_agent.process(items, run_id=run_id)
+
+                if filter_result.filtered_items:
+                    # Build report for user notification
+                    for fi in filter_result.filtered_items:
+                        filtered_item = next(
+                            (item for item in items if item.id == fi.id), None
+                        )
+                        filter_report.append({
+                            "summary": filtered_item.summary[:80] if filtered_item else fi.id[:8],
+                            "reason": fi.reason,
+                            "type": fi.filter_type,
+                        })
+
+                    # Keep only items that passed the filter
+                    kept_ids = set(filter_result.kept_item_ids)
+                    items = [item for item in items if item.id in kept_ids]
+
+                    logger.info(
+                        "Filter: kept %d items, filtered %d items",
+                        len(items),
+                        len(filter_result.filtered_items),
+                    )
+
+                if not items:
+                    logger.info("All items filtered out for %s", week_id)
+                    if status_updater:
+                        await status_updater.fail(
+                            "All items were filtered as irrelevant. "
+                            "Try adjusting your profile (/setup) or adding more content."
+                        )
+                    await self.db.update_pipeline_run(
+                        run_id, PipelineStatus.COMPLETED,
+                    )
+                    return None
+
             # ── Step 1: Cluster ──
             if status_updater:
-                await status_updater.update(0, f"Clustering {len(items)} items...")
+                await status_updater.update(1, f"Clustering {len(items)} items...")
             logger.info("Clustering %d items for %s", len(items), week_id)
 
             cluster_result = await self.clusterer.process(items, run_id=run_id)
@@ -96,7 +144,7 @@ class Orchestrator:
             for i, cluster in enumerate(cluster_result.clusters):
                 if status_updater:
                     await status_updater.update(
-                        1,
+                        2,
                         f"Researching ({i + 1}/{len(cluster_result.clusters)}): "
                         f"{cluster.title}",
                     )
@@ -114,7 +162,7 @@ class Orchestrator:
             for i, cluster in enumerate(cluster_result.clusters):
                 if status_updater:
                     await status_updater.update(
-                        2,
+                        3,
                         f"Writing ({i + 1}/{len(cluster_result.clusters)}): "
                         f"{cluster.title}",
                     )
@@ -132,7 +180,7 @@ class Orchestrator:
 
             # ── Step 4: Edit & Assemble ──
             if status_updater:
-                await status_updater.update(3, "Assembling final magazine...")
+                await status_updater.update(4, "Assembling final magazine...")
             logger.info("Assembling magazine for %s", week_id)
 
             quick_bites_items = [
@@ -153,7 +201,7 @@ class Orchestrator:
             # ── Step 5: Translate (if needed) ──
             if needs_translation:
                 if status_updater:
-                    await status_updater.update(4, f"Translating to {lang_name}...")
+                    await status_updater.update(5, f"Translating to {lang_name}...")
                 logger.info("Translating magazine to %s", lang_name)
 
                 magazine = await self.translator.process(
@@ -190,6 +238,24 @@ class Orchestrator:
                 total_output_tokens=total_output,
                 estimated_cost_usd=cost,
             )
+
+            # Send filter report if items were filtered
+            if filter_report and status_updater:
+                report_lines = [
+                    f"🗑 Filtered {len(filter_report)} item(s):\n"
+                ]
+                for entry in filter_report:
+                    type_icon = {
+                        "irrelevant": "🚫",
+                        "duplicate": "🔄",
+                        "noise": "🗑",
+                        "shallow": "📉",
+                    }
+                    icon = type_icon.get(entry["type"], "❌")
+                    report_lines.append(
+                        f"{icon} {entry['summary']}\n   → {entry['reason']}"
+                    )
+                await status_updater.send_message("\n".join(report_lines))
 
             if status_updater:
                 await status_updater.finish(str(file_path))
