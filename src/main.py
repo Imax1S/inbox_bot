@@ -7,10 +7,12 @@ import sys
 from .agents.clusterer import ClustererAgent
 from .agents.collector import CollectorAgent
 from .agents.editor import EditorAgent
+from .agents.filter import FilterAgent
+from .agents.profiler import ProfilerAgent
 from .agents.researcher import ResearcherAgent
 from .agents.translator import TranslatorAgent
 from .agents.writer import WriterAgent
-from .config import load_config
+from .config import get_user_profile, load_config
 from .db.database import Database
 from .llm.provider import create_provider
 from .obsidian_writer import ObsidianWriter
@@ -27,8 +29,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def init_db(db: Database) -> None:
+async def init_and_load_profile(db: Database, file_profile: dict) -> dict:
+    """Initialize the database and load the user profile (DB > file fallback)."""
     await db.init()
+    return await get_user_profile(db, file_profile)
 
 
 def main() -> None:
@@ -42,10 +46,16 @@ def main() -> None:
     logger.info("Vault: %s", config.obsidian.vault_path)
     logger.info("DB: %s", config.db_path)
 
-    # Initialize database
+    # Initialize database and load user profile from DB (with file fallback)
     db = Database(config.db_path)
-    asyncio.get_event_loop().run_until_complete(init_db(db))
+    user_profile = asyncio.get_event_loop().run_until_complete(
+        init_and_load_profile(db, config.user_profile)
+    )
     logger.info("Database initialized")
+    logger.info(
+        "User profile loaded: %d interest areas",
+        len(user_profile.get("interest_areas", [])),
+    )
 
     # Create LLM provider
     if config.llm.provider in ("anthropic", "claude"):
@@ -57,22 +67,28 @@ def main() -> None:
 
     # Create agents
     collector = CollectorAgent(
-        llm, config.llm.collector_model, db, config.user_profile
+        llm, config.llm.collector_model, db, user_profile
     )
     clusterer = ClustererAgent(
-        llm, config.llm.clusterer_model, db, config.user_profile
+        llm, config.llm.clusterer_model, db, user_profile
     )
     researcher = ResearcherAgent(
-        llm, config.llm.researcher_model, db, config.user_profile
+        llm, config.llm.researcher_model, db, user_profile
     )
     writer = WriterAgent(
-        llm, config.llm.writer_model, db, config.user_profile
+        llm, config.llm.writer_model, db, user_profile
     )
     editor = EditorAgent(
-        llm, config.llm.editor_model, db, config.user_profile
+        llm, config.llm.editor_model, db, user_profile
     )
     translator = TranslatorAgent(
-        llm, config.llm.translator_model, db, config.user_profile
+        llm, config.llm.translator_model, db, user_profile
+    )
+    profiler = ProfilerAgent(
+        llm, config.llm.profiler_model, db
+    )
+    filter_agent = FilterAgent(
+        llm, config.llm.filter_model, db, user_profile
     )
 
     # Create Obsidian writer
@@ -87,6 +103,7 @@ def main() -> None:
         editor=editor,
         translator=translator,
         obsidian_writer=obsidian,
+        filter_agent=filter_agent,
     )
 
     # Create bot
@@ -95,6 +112,7 @@ def main() -> None:
         db=db,
         collector=collector,
         orchestrator=orchestrator,
+        profiler=profiler,
     )
 
     # Build the application

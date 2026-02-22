@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import json
 import logging
 from datetime import datetime
 from uuid import uuid4
@@ -11,12 +12,14 @@ from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
+    ConversationHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
 
 from ..agents.collector import CollectorAgent
+from ..agents.profiler import ProfilerAgent
 from ..config import Config
 from ..content.text_classifier import classify_message
 from ..content.url_parser import fetch_and_extract
@@ -28,6 +31,42 @@ from ..pipeline.status_updater import StatusUpdater
 
 logger = logging.getLogger(__name__)
 
+# ConversationHandler states for /setup
+SETUP_AWAITING_TEXT, SETUP_REVIEWING_AREAS, SETUP_STRICTNESS = range(3)
+
+# Priority cycle for area weight adjustment via inline buttons
+PRIORITY_CYCLE = [
+    ("high", 0.90),
+    ("medium", 0.70),
+    ("low", 0.50),
+    ("off", 0.0),
+]
+PRIORITY_LABELS = {
+    "high": "🔴 High",
+    "medium": "🟡 Medium",
+    "low": "🟢 Low",
+    "off": "⬜ Off",
+}
+
+
+def _priority_for_weight(weight: float) -> str:
+    """Map a numeric weight to the closest priority label."""
+    if weight >= 0.80:
+        return "high"
+    elif weight >= 0.60:
+        return "medium"
+    elif weight > 0:
+        return "low"
+    return "off"
+
+
+def _next_priority(current: str) -> tuple[str, float]:
+    """Cycle to the next priority level."""
+    keys = [p[0] for p in PRIORITY_CYCLE]
+    idx = keys.index(current) if current in keys else 0
+    next_idx = (idx + 1) % len(keys)
+    return PRIORITY_CYCLE[next_idx]
+
 
 class DigestBot:
     def __init__(
@@ -36,11 +75,13 @@ class DigestBot:
         db: Database,
         collector: CollectorAgent,
         orchestrator: Orchestrator,
+        profiler: ProfilerAgent | None = None,
     ):
         self.config = config
         self.db = db
         self.collector = collector
         self.orchestrator = orchestrator
+        self.profiler = profiler
         self.app: Application | None = None
         self._generating = False
 
@@ -138,6 +179,7 @@ class DigestBot:
             "/generate — Generate digest now\n"
             "/items — List this week's items\n"
             "/delete <id> — Remove an item\n"
+            "/setup — Configure your interest profile\n"
             "/language — Choose digest language\n"
             "/status — Pipeline status\n"
             "/logs — Last run's log\n"
@@ -461,6 +503,280 @@ class DigestBot:
         await query.answer(f"Language set to {label}")
         await query.edit_message_text(f"✅ Digest language set to {label}")
 
+    # ── Profile Setup (/setup) ──
+
+    async def _handle_setup(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Entry point for /setup — ask user to describe themselves."""
+        if not update.message or not update.effective_user:
+            return ConversationHandler.END
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return ConversationHandler.END
+
+        if not self.profiler:
+            await update.message.reply_text(
+                "Profile setup is not available (profiler agent not configured)."
+            )
+            return ConversationHandler.END
+
+        await update.message.reply_text(
+            "🔧 *Profile Setup*\n\n"
+            "Tell me about yourself in free form:\n"
+            "— What do you do? What's your field?\n"
+            "— What topics do you follow?\n"
+            "— What are your goals for content consumption?\n"
+            "— Anything you explicitly DON'T want?\n\n"
+            "Just write naturally, I'll extract your interests.\n\n"
+            "Send /cancel to abort.",
+            parse_mode="Markdown",
+        )
+        return SETUP_AWAITING_TEXT
+
+    async def _handle_setup_text(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Process the user's free-form description with ProfilerAgent."""
+        if not update.message or not update.effective_user:
+            return ConversationHandler.END
+
+        text = update.message.text or ""
+        if not text.strip():
+            await update.message.reply_text("Please send a text description.")
+            return SETUP_AWAITING_TEXT
+
+        await update.message.reply_text("🔍 Analyzing your interests...")
+
+        try:
+            extracted = await self.profiler.extract_interests(text)
+        except Exception as e:
+            logger.error("Profiler extraction failed: %s", e)
+            await update.message.reply_text(
+                f"❌ Failed to analyze your description: {e}\n"
+                "Please try again or /cancel."
+            )
+            return SETUP_AWAITING_TEXT
+
+        areas = extracted.get("interest_areas", [])
+        if not areas:
+            await update.message.reply_text(
+                "Couldn't extract any interest areas. "
+                "Please describe your interests in more detail, or /cancel."
+            )
+            return SETUP_AWAITING_TEXT
+
+        # Store extraction data and original text in user_data for later steps
+        context.user_data["setup_extracted"] = extracted
+        context.user_data["setup_user_text"] = text
+        # Initialize area priorities from extracted weights
+        area_priorities = []
+        for area in areas:
+            priority = _priority_for_weight(area.get("weight", 0.7))
+            area_priorities.append({
+                **area,
+                "priority": priority,
+                "weight": area.get("weight", 0.7),
+            })
+        context.user_data["setup_areas"] = area_priorities
+
+        # Show areas for review
+        await self._send_areas_review(update, context)
+        return SETUP_REVIEWING_AREAS
+
+    async def _send_areas_review(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Send the areas review message with inline buttons."""
+        areas = context.user_data.get("setup_areas", [])
+
+        lines = ["📋 *Extracted interest areas:*\n"]
+        buttons = []
+        for i, area in enumerate(areas):
+            name = area.get("name", area.get("id", f"Area {i+1}"))
+            priority = area.get("priority", "medium")
+            label = PRIORITY_LABELS.get(priority, priority)
+            lines.append(f"{i+1}. {name} — {label}")
+            buttons.append([
+                InlineKeyboardButton(
+                    f"{name}: {label}",
+                    callback_data=f"setup_area:{i}",
+                )
+            ])
+
+        lines.append("\nTap an area to change its priority.")
+        lines.append("When done, tap *Confirm*.")
+
+        buttons.append([
+            InlineKeyboardButton("✅ Confirm", callback_data="setup_confirm_areas"),
+        ])
+
+        keyboard = InlineKeyboardMarkup(buttons)
+
+        # Send or edit the message
+        msg = update.callback_query.message if update.callback_query else update.message
+        if update.callback_query:
+            try:
+                await update.callback_query.edit_message_text(
+                    "\n".join(lines),
+                    reply_markup=keyboard,
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                await msg.reply_text(
+                    "\n".join(lines),
+                    reply_markup=keyboard,
+                    parse_mode="Markdown",
+                )
+        else:
+            await msg.reply_text(
+                "\n".join(lines),
+                reply_markup=keyboard,
+                parse_mode="Markdown",
+            )
+
+    async def _handle_setup_area_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Handle area priority toggle or confirm button."""
+        query = update.callback_query
+        if not query or not query.data:
+            return SETUP_REVIEWING_AREAS
+
+        await query.answer()
+
+        if query.data == "setup_confirm_areas":
+            # Move to strictness selection
+            return await self._ask_strictness(update, context)
+
+        # Toggle area priority
+        if query.data.startswith("setup_area:"):
+            idx_str = query.data.split(":", 1)[1]
+            try:
+                idx = int(idx_str)
+            except ValueError:
+                return SETUP_REVIEWING_AREAS
+
+            areas = context.user_data.get("setup_areas", [])
+            if 0 <= idx < len(areas):
+                current_priority = areas[idx].get("priority", "medium")
+                new_priority, new_weight = _next_priority(current_priority)
+                areas[idx]["priority"] = new_priority
+                areas[idx]["weight"] = new_weight
+
+            # Re-render the review message
+            await self._send_areas_review(update, context)
+
+        return SETUP_REVIEWING_AREAS
+
+    async def _ask_strictness(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Ask user to choose filtering strictness."""
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🔒 Strict",
+                    callback_data="setup_strict:strict",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "⚖️ Moderate (recommended)",
+                    callback_data="setup_strict:moderate",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔓 Relaxed",
+                    callback_data="setup_strict:relaxed",
+                ),
+            ],
+        ])
+
+        query = update.callback_query
+        if query:
+            await query.edit_message_text(
+                "🎚 *Filtering strictness*\n\n"
+                "How aggressively should I filter irrelevant content?\n\n"
+                "🔒 *Strict* — only content closely matching your interests\n"
+                "⚖️ *Moderate* — balanced filtering, slight tangents OK\n"
+                "🔓 *Relaxed* — keep most content, only remove obvious noise",
+                reply_markup=keyboard,
+                parse_mode="Markdown",
+            )
+        return SETUP_STRICTNESS
+
+    async def _handle_setup_strictness(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Handle strictness selection and build the final profile."""
+        query = update.callback_query
+        if not query or not query.data:
+            return SETUP_STRICTNESS
+
+        strictness = query.data.split(":", 1)[1]
+        await query.answer(f"Strictness: {strictness}")
+
+        # Build the profile
+        extracted = context.user_data.get("setup_extracted", {})
+        areas = context.user_data.get("setup_areas", [])
+
+        # Filter out "off" areas and prepare confirmed list
+        confirmed_areas = [a for a in areas if a.get("weight", 0) > 0]
+
+        profile = ProfilerAgent.build_profile(
+            extracted=extracted,
+            confirmed_areas=confirmed_areas,
+            strictness=strictness,
+        )
+
+        # Save to database
+        await self.db.set_setting("user_profile", json.dumps(profile, ensure_ascii=False))
+        await self.db.set_setting("filtering_strictness", strictness)
+
+        # Update the filter agent's profile if orchestrator has one
+        if hasattr(self.orchestrator, 'filter_agent') and self.orchestrator.filter_agent:
+            self.orchestrator.filter_agent.update_profile(profile)
+
+        # Summary for user
+        area_count = len(confirmed_areas)
+        area_names = [a.get("name", a.get("id", "?")) for a in confirmed_areas]
+        strictness_labels = {
+            "strict": "🔒 Strict",
+            "moderate": "⚖️ Moderate",
+            "relaxed": "🔓 Relaxed",
+        }
+
+        await query.edit_message_text(
+            f"✅ *Profile saved!*\n\n"
+            f"Interest areas ({area_count}):\n"
+            + "\n".join(f"  • {name}" for name in area_names)
+            + f"\n\nFiltering: {strictness_labels.get(strictness, strictness)}\n\n"
+            "Your digest will now be filtered based on this profile. "
+            "Run /setup again anytime to reconfigure.",
+            parse_mode="Markdown",
+        )
+
+        # Cleanup user_data
+        context.user_data.pop("setup_extracted", None)
+        context.user_data.pop("setup_user_text", None)
+        context.user_data.pop("setup_areas", None)
+
+        return ConversationHandler.END
+
+    async def _handle_setup_cancel(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Cancel the setup conversation."""
+        if update.message:
+            await update.message.reply_text("Setup cancelled.")
+        # Cleanup
+        context.user_data.pop("setup_extracted", None)
+        context.user_data.pop("setup_user_text", None)
+        context.user_data.pop("setup_areas", None)
+        return ConversationHandler.END
+
     # ── Bot Setup ──
 
     @staticmethod
@@ -471,6 +787,7 @@ class DigestBot:
             BotCommand("generate", "Generate weekly digest now"),
             BotCommand("items", "List this week's collected items"),
             BotCommand("delete", "Remove an item by ID"),
+            BotCommand("setup", "Configure your interest profile"),
             BotCommand("language", "Choose digest language (RU/EN)"),
             BotCommand("status", "Show last pipeline run status"),
             BotCommand("logs", "Show last pipeline run logs"),
@@ -486,6 +803,33 @@ class DigestBot:
             .post_init(self._post_init)
             .build()
         )
+
+        # Setup conversation handler (must be before the catch-all message handler)
+        setup_conv = ConversationHandler(
+            entry_points=[CommandHandler("setup", self._handle_setup)],
+            states={
+                SETUP_AWAITING_TEXT: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        self._handle_setup_text,
+                    ),
+                ],
+                SETUP_REVIEWING_AREAS: [
+                    CallbackQueryHandler(
+                        self._handle_setup_area_callback,
+                        pattern=r"^setup_(area|confirm)",
+                    ),
+                ],
+                SETUP_STRICTNESS: [
+                    CallbackQueryHandler(
+                        self._handle_setup_strictness,
+                        pattern=r"^setup_strict:",
+                    ),
+                ],
+            },
+            fallbacks=[CommandHandler("cancel", self._handle_setup_cancel)],
+        )
+        self.app.add_handler(setup_conv)
 
         self.app.add_handler(CommandHandler("start", self._handle_start))
         self.app.add_handler(CommandHandler("generate", self._handle_generate))

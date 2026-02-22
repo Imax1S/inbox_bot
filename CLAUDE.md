@@ -43,6 +43,8 @@ src/
 │   ├── base.py               # BaseAgent: prompt loading, LLM calling, step logging
 │   ├── collector.py           # Classifies & summarizes incoming messages
 │   ├── clusterer.py           # Groups items into 3-6 topic clusters
+│   ├── filter.py              # Filters irrelevant/duplicate items before digest generation
+│   ├── profiler.py            # Extracts user interests from free-form text for profile setup
 │   ├── researcher.py          # Produces research briefs per cluster
 │   ├── writer.py              # Writes magazine-quality articles per cluster
 │   ├── editor.py              # Assembles final weekly magazine
@@ -60,11 +62,13 @@ src/
 │   ├── scheduler.py           # Weekly digest schedule (default: Sunday 23:00 Europe/Berlin)
 │   └── status_updater.py      # Real-time Telegram progress updates
 └── telegram/
-    └── bot.py                 # DigestBot: commands (/start, /generate, /items, /delete, /language, /status, /logs, /cost, /week)
+    └── bot.py                 # DigestBot: commands (/start, /generate, /items, /delete, /setup, /language, /status, /logs, /cost, /week)
 
 prompts/                       # LLM system prompts (one .txt per agent)
 ├── collector.txt
 ├── clusterer.txt
+├── filter.txt
+├── profiler.txt
 ├── researcher.txt
 ├── writer.txt
 ├── editor.txt
@@ -85,7 +89,8 @@ data/                          # SQLite database storage (gitignored)
 4. `CollectorAgent` summarizes and tags the message via LLM
 5. Item saved to SQLite `items` table
 6. On weekly trigger (or `/generate`): `Orchestrator` runs the pipeline:
-   - **Clusterer** → groups items into 3-6 topic clusters
+   - **Filter** → evaluates items for relevance, removes duplicates and noise (reports filtered items to user)
+   - **Clusterer** → groups remaining items into 3-6 topic clusters
    - **Researcher** → produces research briefs per cluster (fills gaps)
    - **Writer** → writes magazine-quality article per cluster
    - **Editor** → assembles final Markdown document
@@ -106,6 +111,8 @@ Agent parameters:
 | Agent | Temperature | Max Tokens | Default Model |
 |-------|-------------|------------|---------------|
 | Collector | 0.3 | 1024 | Sonnet (fast) |
+| Profiler | 0.3 | 4096 | Sonnet (fast) |
+| Filter | 0.2 | 4096 | Sonnet (fast) |
 | Clusterer | 0.3 | 2048 | Sonnet (fast) |
 | Researcher | 0.7 | 2048 | Sonnet (fast) |
 | Writer | 0.8 | 2048-8192 | Opus (quality) |
@@ -126,7 +133,7 @@ Four tables in `src/db/database.py`:
 - **items** — collected messages (type, raw_content, source_url, extracted_text, summary, tags, language, week_id, status)
 - **pipeline_runs** — execution history (week_id, status, token totals, cost)
 - **step_logs** — per-agent logs (agent, model, tokens, duration, errors)
-- **settings** — key-value store for user preferences (e.g., `digest_language`)
+- **settings** — key-value store for user preferences (`digest_language`, `user_profile`, `filtering_strictness`)
 
 Indexes: `idx_items_week_id`, `idx_items_status`, `idx_step_logs_run_id`
 
@@ -151,6 +158,8 @@ All config is loaded via `src/config.py` from environment variables (`.env` file
 | `WRITER_MODEL` | No | per-provider default | Override model for Writer agent |
 | `EDITOR_MODEL` | No | per-provider default | Override model for Editor agent |
 | `TRANSLATOR_MODEL` | No | per-provider default | Override model for Translator agent |
+| `PROFILER_MODEL` | No | per-provider default | Override model for Profiler agent |
+| `FILTER_MODEL` | No | per-provider default | Override model for Filter agent |
 | `SCHEDULE_ENABLED` | No | `true` | Enable weekly auto-generation |
 | `SCHEDULE_DAY` | No | `6` (Sunday) | Day of week (0=Mon, 6=Sun) |
 | `SCHEDULE_HOUR` | No | `23` | Hour for scheduled generation |

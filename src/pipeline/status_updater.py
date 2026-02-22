@@ -8,7 +8,7 @@ from telegram import Bot
 
 logger = logging.getLogger(__name__)
 
-STEP_NAMES = ["Clustering", "Researching", "Writing", "Assembling"]
+STEP_NAMES = ["Filtering", "Clustering", "Researching", "Writing", "Assembling"]
 STEP_ICONS = {"done": "✅", "active": "🔄", "pending": "⬜"}
 
 # Minimum interval between message edits (Telegram rate limit protection)
@@ -56,6 +56,13 @@ class StatusUpdater:
             f"Saved to: {result_path}" if result_path else "Complete"
         )
         await self._edit_message()
+
+    async def send_message(self, text: str) -> None:
+        """Send a standalone message to the chat (not editing the status)."""
+        try:
+            await self.bot.send_message(chat_id=self.chat_id, text=text)
+        except Exception as e:
+            logger.error("Failed to send message: %s", e)
 
     async def fail(self, error: str) -> None:
         """Mark the pipeline as failed."""

@@ -1,11 +1,14 @@
 """Configuration module for Inbox Agent Bot."""
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -25,6 +28,8 @@ class LLMConfig:
     writer_model: str
     editor_model: str
     translator_model: str
+    profiler_model: str
+    filter_model: str
 
 
 @dataclass
@@ -94,6 +99,8 @@ def load_config() -> Config:
             writer_model=os.getenv("WRITER_MODEL", default_quality),
             editor_model=os.getenv("EDITOR_MODEL", default_quality),
             translator_model=os.getenv("TRANSLATOR_MODEL", default_fast),
+            profiler_model=os.getenv("PROFILER_MODEL", default_fast),
+            filter_model=os.getenv("FILTER_MODEL", default_fast),
         ),
         obsidian=ObsidianConfig(
             vault_path=Path(os.getenv("OBSIDIAN_VAULT_PATH", "/vault/life/weekly")),
@@ -108,3 +115,25 @@ def load_config() -> Config:
         user_profile=user_profile,
         db_path=db_path,
     )
+
+
+async def get_user_profile(db, file_profile: dict) -> dict:
+    """Load user profile from DB settings, falling back to file-based profile.
+
+    Priority: DB (set via /setup) > user_profile.json > empty dict.
+    """
+    try:
+        stored = await db.get_setting("user_profile")
+        if stored:
+            profile = json.loads(stored)
+            logger.info("Loaded user profile from database")
+            return profile
+    except (json.JSONDecodeError, Exception) as e:
+        logger.warning("Failed to load profile from DB: %s — using file fallback", e)
+
+    if file_profile:
+        logger.info("Using user profile from user_profile.json")
+        return file_profile
+
+    logger.warning("No user profile found — using empty profile")
+    return {}
