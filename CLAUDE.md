@@ -17,7 +17,7 @@ An AI-powered Telegram bot that collects notes, links, and ideas throughout the 
 | UI | Telegram bot |
 | Output | Markdown files in Obsidian vault |
 | Deployment | Docker / docker-compose |
-| Tests | None (manual testing only) |
+| Tests | pytest + pytest-asyncio (run: `pytest tests/`) |
 
 ## How to Run
 
@@ -40,11 +40,11 @@ src/
 ├── config.py                  # Dataclass-based config from .env + user_profile.json
 ├── obsidian_writer.py         # Writes digest to Obsidian vault as YYYY-Www.md
 ├── agents/                    # LLM-powered agents (all extend BaseAgent)
-│   ├── base.py               # BaseAgent: prompt loading, LLM calling, step logging
-│   ├── collector.py           # Classifies & summarizes incoming messages
-│   ├── clusterer.py           # Groups items into 3-6 topic clusters
-│   ├── filter.py              # Filters irrelevant/duplicate items before digest generation
-│   ├── profiler.py            # Extracts user interests from free-form text for profile setup
+│   ├── base.py               # BaseAgent: prompt loading, LLM calling (_call_llm / _call_llm_structured), step logging
+│   ├── collector.py           # Classifies & summarizes incoming messages (structured output)
+│   ├── clusterer.py           # Groups items into 3-6 topic clusters (structured output)
+│   ├── filter.py              # Filters irrelevant/duplicate items before digest generation (structured output)
+│   ├── profiler.py            # Extracts user interests from free-form text for profile setup (structured output)
 │   ├── researcher.py          # Produces research briefs per cluster
 │   ├── writer.py              # Writes magazine-quality articles per cluster
 │   ├── editor.py              # Assembles final weekly magazine
@@ -56,7 +56,7 @@ src/
 │   ├── database.py            # Async SQLite interface with schema (items, pipeline_runs, step_logs, settings)
 │   └── models.py              # Dataclasses: Item, Cluster, PipelineRun, StepLog, enums
 ├── llm/
-│   └── provider.py            # LLMProvider protocol, AnthropicProvider, OpenAIProvider, cost estimation
+│   └── provider.py            # LLMProvider protocol, AnthropicProvider, OpenAIProvider; generate() + generate_structured() (tool use), cost estimation
 ├── pipeline/
 │   ├── orchestrator.py        # Runs multi-agent pipeline sequentially
 │   ├── scheduler.py           # Weekly digest schedule (default: Sunday 23:00 Europe/Berlin)
@@ -75,6 +75,7 @@ prompts/                       # LLM system prompts (one .txt per agent)
 ├── translator.txt
 └── system_prompt.txt          # Legacy prompt (Russian)
 
+tests/                         # pytest suite: MockLLMProvider, 17 tests covering provider, base agent, collector, clusterer, filter, profiler
 user_profile.json              # User interests, style prefs, language config (passed to agents)
 data/                          # SQLite database storage (gitignored)
 ```
@@ -102,9 +103,11 @@ data/                          # SQLite database storage (gitignored)
 
 All agents extend `BaseAgent` (in `src/agents/base.py`), which provides:
 - Prompt loading from `prompts/` directory
-- LLM invocation with configurable model, temperature, and max_tokens
+- LLM invocation via `_call_llm()` (free-text) or `_call_llm_structured()` (tool use → typed dict)
 - Step logging to database (tokens, cost, duration, errors)
 - User profile injection into prompts
+
+**Structured output agents** (Collector, Clusterer, Filter, Profiler) use `_call_llm_structured()` which calls `LLMProvider.generate_structured()` — an Anthropic tool-use / OpenAI function-call that returns a validated dict instead of raw JSON text. Writer, Researcher, Editor, and Translator still use free-text `_call_llm()`.
 
 Agent parameters:
 
@@ -192,7 +195,7 @@ All config is loaded via `src/config.py` from environment variables (`.env` file
 - Never commit Obsidian vault content
 - Never hardcode user preferences — use `user_profile.json`
 - Never hardcode prompts — use `prompts/*.txt` files
-- No automated tests exist yet — do not assume any test infrastructure
+- Run tests with `pytest tests/` (17 tests; `MockLLMProvider` in `tests/conftest.py` simulates LLM calls without real API calls)
 
 ### Dependencies
 When adding dependencies, update `requirements.txt`. Current dependencies:
@@ -205,6 +208,8 @@ When adding dependencies, update `requirements.txt`. Current dependencies:
 - `lxml>=5.0.0` — HTML/XML processing
 - `aiosqlite>=0.20.0` — Async SQLite
 - `python-dotenv==1.0.1` — .env loading
+- `pytest>=8.0.0` — test runner
+- `pytest-asyncio>=0.24.0` — async test support
 
 ### Docker
 - Base image: `python:3.12-slim`

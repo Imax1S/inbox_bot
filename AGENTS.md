@@ -11,20 +11,24 @@
 | `src/main.py` | Entry point — wires bot, DB, agents, orchestrator, scheduler |
 | `src/config.py` | Dataclass-based config from `.env` + `user_profile.json` |
 | `src/telegram/bot.py` | `DigestBot` — all Telegram commands and message handlers |
-| `src/agents/base.py` | `BaseAgent` — prompt loading, LLM calling, step logging |
-| `src/agents/collector.py` | Classifies & summarizes incoming messages |
-| `src/agents/filter.py` | Filters irrelevant/duplicate items before clustering |
-| `src/agents/clusterer.py` | Groups items into 3-6 topic clusters + quick bites |
+| `src/agents/base.py` | `BaseAgent` — prompt loading, `_call_llm()` (free-text) / `_call_llm_structured()` (tool use), step logging |
+| `src/agents/collector.py` | Classifies & summarizes incoming messages (structured output via tool use) |
+| `src/agents/filter.py` | Filters irrelevant/duplicate items before clustering (structured output) |
+| `src/agents/clusterer.py` | Groups items into 3-6 topic clusters + quick bites (structured output) |
 | `src/agents/researcher.py` | Produces research briefs per cluster |
 | `src/agents/writer.py` | Writes magazine-quality articles per cluster |
 | `src/agents/editor.py` | Assembles the final weekly magazine |
 | `src/agents/translator.py` | Translates magazine to user's chosen language |
-| `src/agents/profiler.py` | Extracts user interests from free-form text (/setup) |
+| `src/agents/profiler.py` | Extracts user interests from free-form text (/setup) (structured output) |
 | `src/content/text_classifier.py` | Regex-based message classification (ARTICLE/TOPIC_SEED/CONTEXT_NOTE) |
 | `src/content/url_parser.py` | Fetches & extracts article text; special handling for Twitter/X via oEmbed + FxTwitter |
 | `src/db/database.py` | Async SQLite interface (items, pipeline_runs, step_logs, settings) |
 | `src/db/models.py` | Dataclasses: Item, Cluster, PipelineRun, StepLog, enums |
-| `src/llm/provider.py` | `LLMProvider` protocol, `AnthropicProvider`, `OpenAIProvider`, cost estimation |
+| `src/llm/provider.py` | `LLMProvider` protocol with `generate()` + `generate_structured()` (tool use/function call); `AnthropicProvider`, `OpenAIProvider`, cost estimation |
+| `tests/conftest.py` | `MockLLMProvider` + shared fixtures for agent tests (no real API calls) |
+| `tests/test_agents.py` | Happy-path & fallback tests for Collector, Clusterer, Filter, Profiler |
+| `tests/test_base_agent.py` | Tests for `_call_llm_structured()` in BaseAgent |
+| `tests/test_provider.py` | Tests for provider layer |
 | `src/pipeline/orchestrator.py` | Runs multi-agent pipeline sequentially (Filter→Cluster→Research→Write→Edit→Translate) |
 | `src/pipeline/scheduler.py` | Weekly digest schedule (default: Sunday 23:00 Europe/Berlin) |
 | `src/pipeline/status_updater.py` | Real-time Telegram progress updates during pipeline run |
@@ -73,9 +77,16 @@ Four SQLite tables (see `src/db/database.py`):
 - **step_logs** — per-agent logs: `agent`, `llm_model`, `input_tokens`, `output_tokens`, `duration`, `error`
 - **settings** — key-value store: `digest_language`, `user_profile`, `filtering_strictness`, `llm_provider`
 
+## Running Tests
+
+```bash
+pytest tests/
+```
+
+Uses `MockLLMProvider` (in `tests/conftest.py`) to simulate LLM responses without real API calls. 17 tests covering the provider layer, `BaseAgent._call_llm_structured()`, and all four structured-output agents (Collector, Clusterer, Filter, Profiler) — both happy path and fallback behavior.
+
 ## Conventions
 
-- **No automated tests** — manual run is the current check
 - **Async throughout** — all I/O uses `async`/`await`
 - **Prompts live in files** — edit `prompts/*.txt`, not agent code, to change LLM behavior
 - **User profile is JSON** — edit `user_profile.json` or use `/setup`; never hardcode preferences
