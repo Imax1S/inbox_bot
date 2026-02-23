@@ -154,7 +154,8 @@ class DigestBot:
         icon = type_icon.get(item_type.value, "📌")
         tags_str = item.tags_str() if item.tags else "no tags"
 
-        reply = f"{icon} Saved: \"{item.summary[:100]}\"\nTags: {tags_str}"
+        summary_preview = item.summary[:100] + "..." if len(item.summary) > 100 else item.summary
+        reply = f"{icon} Saved: \"{summary_preview}\"\nTags: {tags_str}"
         if fetch_error:
             reply += f"\n⚠️ {fetch_error}"
 
