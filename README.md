@@ -13,6 +13,10 @@ Telegram ──> Classify & Collect ──> SQLite
                                       │
                                       v
                                ┌─────────────┐
+                               │   Filter     │  Remove irrelevant/duplicate/noise
+                               └──────┬──────┘
+                                      v
+                               ┌─────────────┐
                                │  Clusterer   │  Group items into 3-6 topics
                                └──────┬──────┘
                                       v
@@ -56,10 +60,11 @@ python -m src.main
 | Command | Description |
 |---------|-------------|
 | `/start` | Introduction |
-| `/generate` | Run the digest pipeline now |
+| `/generate` | Run the digest pipeline now (alias: `/digest`) |
 | `/items` | List collected items |
 | `/delete` | Remove an item |
-| `/language` | Choose digest language (RU/EN) |
+| `/setup` | Configure your interest profile (multi-step wizard) |
+| `/language` | Choose digest language — RU/EN (alias: `/lang`) |
 | `/status` | Pipeline status |
 | `/logs` | Agent step logs |
 | `/cost` | Token usage and cost |

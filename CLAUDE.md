@@ -51,9 +51,9 @@ src/
 │   └── translator.py          # Translates final magazine to user's chosen language
 ├── content/
 │   ├── text_classifier.py     # Regex-based message classification (ARTICLE/TOPIC_SEED/CONTEXT_NOTE)
-│   └── url_parser.py          # Fetches & extracts article text (readability-lxml + BS4 fallback)
+│   └── url_parser.py          # Fetches & extracts article text (readability-lxml + BS4 fallback; Twitter/X via oEmbed → FxTwitter)
 ├── db/
-│   ├── database.py            # Async SQLite interface with schema (items, pipeline_runs, step_logs)
+│   ├── database.py            # Async SQLite interface with schema (items, pipeline_runs, step_logs, settings)
 │   └── models.py              # Dataclasses: Item, Cluster, PipelineRun, StepLog, enums
 ├── llm/
 │   └── provider.py            # LLMProvider protocol, AnthropicProvider, OpenAIProvider, cost estimation
@@ -62,7 +62,7 @@ src/
 │   ├── scheduler.py           # Weekly digest schedule (default: Sunday 23:00 Europe/Berlin)
 │   └── status_updater.py      # Real-time Telegram progress updates
 └── telegram/
-    └── bot.py                 # DigestBot: commands (/start, /generate, /items, /delete, /setup, /language, /provider, /estimate, /status, /logs, /cost, /week)
+    └── bot.py                 # DigestBot: commands (/start, /generate, /items, /delete, /setup, /language, /provider, /estimate, /status, /logs, /cost, /week); aliases: /digest→/generate, /lang→/language
 
 prompts/                       # LLM system prompts (one .txt per agent)
 ├── collector.txt
@@ -85,12 +85,12 @@ data/                          # SQLite database storage (gitignored)
 
 1. User sends Telegram message (text, URL, or mixed)
 2. `text_classifier.py` classifies it as ARTICLE, TOPIC_SEED, or CONTEXT_NOTE
-3. If URL detected: `url_parser.py` fetches and extracts article content
+3. If URL detected: `url_parser.py` fetches and extracts article content (Twitter/X URLs handled via oEmbed API first, with FxTwitter API as fallback; both support Twitter Articles/long-form posts)
 4. `CollectorAgent` summarizes and tags the message via LLM
 5. Item saved to SQLite `items` table
 6. On weekly trigger (or `/generate`): `Orchestrator` runs the pipeline:
-   - **Filter** → evaluates items for relevance, removes duplicates and noise (reports filtered items to user)
-   - **Clusterer** → groups remaining items into 3-6 topic clusters
+   - **Filter** → evaluates items for relevance, removes duplicates and noise (filter types: irrelevant, duplicate, noise, shallow); reports filtered items to user
+   - **Clusterer** → groups remaining items into 3-6 topic clusters; unclustered items go into a "quick bites" list
    - **Researcher** → produces research briefs per cluster (fills gaps)
    - **Writer** → writes magazine-quality article per cluster
    - **Editor** → assembles final Markdown document
@@ -115,14 +115,14 @@ Agent parameters:
 | Filter | 0.2 | 4096 | Sonnet (fast) |
 | Clusterer | 0.3 | 2048 | Sonnet (fast) |
 | Researcher | 0.7 | 2048 | Sonnet (fast) |
-| Writer | 0.8 | 2048-8192 | Sonnet (fast) |
-| Editor | 0.5 | 8192 | Sonnet (fast) |
+| Writer | 0.8 | 2048-8192 | Sonnet (quality) |
+| Editor | 0.5 | 8192 | Sonnet (quality) |
 | Translator | 0.3 | 16384 | Sonnet (fast) |
 
 ### Language & Translation
 
 The pipeline runs entirely in English for better LLM reasoning quality. Translation is an optional final step:
-- Users select their preferred language via `/language` (or `/lang`) with inline keyboard buttons
+- Users select their preferred language via `/language` (alias `/lang`) with inline keyboard buttons
 - Preference is persisted in the `settings` table
 - If the selected language is not English, the `TranslatorAgent` translates the final magazine as Step 5
 - Currently supported: English, Russian
@@ -133,7 +133,7 @@ Four tables in `src/db/database.py`:
 - **items** — collected messages (type, raw_content, source_url, extracted_text, summary, tags, language, week_id, status)
 - **pipeline_runs** — execution history (week_id, status, token totals, cost)
 - **step_logs** — per-agent logs (agent, model, tokens, duration, errors)
-- **settings** — key-value store for user preferences (`digest_language`, `user_profile`, `filtering_strictness`)
+- **settings** — key-value store for user preferences (`digest_language`, `user_profile`, `filtering_strictness`, `llm_provider`)
 
 Indexes: `idx_items_week_id`, `idx_items_status`, `idx_step_logs_run_id`
 
@@ -222,6 +222,13 @@ When adding dependencies, update `requirements.txt`. Current dependencies:
 
 ### Modifying Agent Behavior
 Edit the corresponding prompt file in `prompts/`. Agent code handles I/O and parsing; the prompt defines the LLM's task.
+
+### `/setup` Profile Wizard
+Three-step `ConversationHandler` flow in `bot.py`:
+1. **Text input** — user describes themselves in free form; `ProfilerAgent` extracts interest areas
+2. **Area review** — inline keyboard shows each area with priority (🔴 High / 🟡 Medium / 🟢 Low / ⬜ Off); tapping cycles through priorities
+3. **Strictness selection** — user picks Strict / Moderate / Relaxed filtering
+Profile saved to `settings` table as JSON. Use `/cancel` to abort at any step.
 
 ### Adding a Telegram Command
 Add a handler method to `DigestBot` in `src/telegram/bot.py` and register it in the `build()` method.
