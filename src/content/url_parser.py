@@ -15,6 +15,7 @@ USER_AGENT = (
 
 _TWITTER_DOMAINS = {"twitter.com", "x.com", "mobile.twitter.com", "mobile.x.com"}
 _TWITTER_OEMBED_URL = "https://publish.twitter.com/oembed"
+_FXTWITTER_API_URL = "https://api.fxtwitter.com"
 
 
 def _is_twitter_url(url: str) -> bool:
@@ -24,6 +25,21 @@ def _is_twitter_url(url: str) -> bool:
         return host in _TWITTER_DOMAINS
     except Exception:
         return False
+
+
+def _parse_twitter_url(url: str) -> tuple[str | None, str | None]:
+    """Extract (username, tweet_id) from a Twitter/X URL.
+
+    Returns (None, None) if the URL doesn't match the expected format.
+    """
+    try:
+        path_parts = urlparse(url).path.strip("/").split("/")
+        # Expected: /{username}/status/{tweet_id}[/...]
+        if len(path_parts) >= 3 and path_parts[1] == "status":
+            return path_parts[0], path_parts[2]
+    except Exception:
+        pass
+    return None, None
 
 
 async def _fetch_twitter_oembed(url: str) -> tuple[str | None, str | None]:
@@ -71,6 +87,49 @@ async def _fetch_twitter_oembed(url: str) -> tuple[str | None, str | None]:
     return None, "Could not parse tweet content"
 
 
+async def _fetch_fxtwitter(url: str) -> tuple[str | None, str | None]:
+    """Extract tweet text via FxTwitter API (no auth required, more reliable).
+
+    Returns (extracted_text, error_message).
+    """
+    username, tweet_id = _parse_twitter_url(url)
+    if not username or not tweet_id:
+        return None, "Could not parse Twitter URL for FxTwitter lookup"
+
+    api_url = f"{_FXTWITTER_API_URL}/{username}/status/{tweet_id}"
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=FETCH_TIMEOUT) as client:
+            resp = await client.get(api_url, headers={"User-Agent": USER_AGENT})
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.warning("FxTwitter API request failed for %s: %s", url, e)
+        return None, f"Could not fetch tweet via FxTwitter: {e}"
+
+    tweet = data.get("tweet") or {}
+    tweet_text = tweet.get("text", "").strip()
+    if not tweet_text:
+        return None, "FxTwitter returned empty tweet text"
+
+    author = tweet.get("author") or {}
+    author_name = author.get("name", "unknown")
+    author_handle = author.get("screen_name", "")
+    author_line = f"{author_name} (@{author_handle})" if author_handle else author_name
+
+    # Append quoted tweet text if present
+    quote = tweet.get("quote")
+    if quote:
+        q_text = quote.get("text", "").strip()
+        q_author = quote.get("author") or {}
+        q_name = q_author.get("name", "")
+        q_handle = q_author.get("screen_name", "")
+        if q_text:
+            q_author_line = f"{q_name} (@{q_handle})" if q_handle else q_name
+            tweet_text += f"\n\n[Quoting {q_author_line}]: {q_text}"
+
+    return f"Tweet by {author_line}:\n\n{tweet_text}", None
+
+
 async def fetch_and_extract(url: str) -> tuple[str | None, str | None]:
     """Fetch a URL and extract article text.
 
@@ -81,7 +140,12 @@ async def fetch_and_extract(url: str) -> tuple[str | None, str | None]:
     # Twitter/X.com requires special handling — regular HTTP gives empty JS shell
     if _is_twitter_url(url):
         logger.debug("Detected Twitter/X URL, using oEmbed: %s", url)
-        return await _fetch_twitter_oembed(url)
+        text, err = await _fetch_twitter_oembed(url)
+        if text:
+            return text, None
+        # oEmbed failed — try FxTwitter as fallback
+        logger.debug("oEmbed failed (%s), falling back to FxTwitter: %s", err, url)
+        return await _fetch_fxtwitter(url)
 
     try:
         html = await _fetch_html(url)
