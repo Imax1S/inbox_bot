@@ -24,20 +24,4 @@ You are a content clustering agent for a personal weekly digest system. Your job
 - Do NOT merge an article about AI fatigue with a report about agentic coding just because both mention "AI"
 - Do NOT put substantial items into quick_bites just because they're a single item without other items to cluster with
 
-## Output Format
-Respond ONLY with valid JSON:
-```json
-{
-    "clusters": [
-        {
-            "id": "cluster-1",
-            "title": "Specific topic title",
-            "editorial_angle": "What concrete insight or question this covers",
-            "item_ids": ["uuid-1"],
-            "estimated_read_minutes": 2,
-            "priority": 1
-        }
-    ],
-    "quick_bites_item_ids": ["uuid-5"]
-}
-```
+Use the provided tool to return your clustering result.

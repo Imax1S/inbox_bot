@@ -23,6 +23,26 @@ class CollectorAgent(BaseAgent):
     prompt_file = "collector.txt"
     agent_name = "collector"
 
+    OUTPUT_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "summary": {
+                "type": "string",
+                "description": "2-3 sentence summary capturing the key point and why it matters",
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "3-7 lowercase snake_case semantic tags for clustering (e.g. 'ai_regulation', 'system_design')",
+            },
+            "language": {
+                "type": "string",
+                "description": "ISO 639-1 language code of the content (e.g. 'en', 'ru')",
+            },
+        },
+        "required": ["summary", "tags", "language"],
+    }
+
     def __init__(
         self,
         llm: LLMProvider,
@@ -46,23 +66,23 @@ class CollectorAgent(BaseAgent):
         """Process an incoming message and return summary + tags + language."""
         user_message = self._build_user_message(raw_content, extracted_text, item_type)
 
-        response = await self._call_llm(
-            user_message=user_message,
-            run_id=run_id,
-            max_tokens=1024,
-            temperature=0.3,
-        )
-
         try:
-            data = self._extract_json(response.content)
+            data = await self._call_llm_structured(
+                user_message=user_message,
+                tool_name="classify_content",
+                tool_description="Classify and summarize the incoming message",
+                output_schema=self.OUTPUT_SCHEMA,
+                run_id=run_id,
+                max_tokens=1024,
+                temperature=0.3,
+            )
             return CollectorResult(
                 summary=data.get("summary", raw_content[:200]),
                 tags=data.get("tags", []),
                 language=data.get("language", "ru"),
             )
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.warning("Failed to parse collector response: %s", e)
-            # Fallback: use raw content as summary
+        except Exception as e:
+            logger.warning("Failed to get structured collector response: %s", e)
             return CollectorResult(
                 summary=raw_content[:200],
                 tags=[],

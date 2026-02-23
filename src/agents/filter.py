@@ -72,6 +72,59 @@ class FilterAgent(BaseAgent):
             user_profile_json=json.dumps(user_profile, ensure_ascii=False, indent=2)
         )
 
+    OUTPUT_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "kept_items": {
+                "type": "array",
+                "description": "Items to keep in the digest",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "Item ID"},
+                        "relevance_score": {
+                            "type": "number",
+                            "description": "Relevance score 0.0-1.0",
+                        },
+                        "matched_areas": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "User interest area IDs this item matches",
+                        },
+                        "reason": {"type": "string", "description": "Brief reason why this is relevant"},
+                    },
+                    "required": ["id", "relevance_score", "reason"],
+                },
+            },
+            "filtered_items": {
+                "type": "array",
+                "description": "Items to remove from the digest",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "Item ID"},
+                        "relevance_score": {
+                            "type": "number",
+                            "description": "Relevance score 0.0-1.0",
+                        },
+                        "filter_type": {
+                            "type": "string",
+                            "enum": ["irrelevant", "duplicate", "noise", "shallow"],
+                            "description": "Reason category for filtering",
+                        },
+                        "reason": {"type": "string", "description": "Specific reason for filtering"},
+                        "duplicate_of": {
+                            "type": "string",
+                            "description": "ID of the kept item this duplicates (only for filter_type=duplicate)",
+                        },
+                    },
+                    "required": ["id", "relevance_score", "filter_type", "reason"],
+                },
+            },
+        },
+        "required": ["kept_items", "filtered_items"],
+    }
+
     async def process(
         self,
         items: list[Item],
@@ -82,18 +135,18 @@ class FilterAgent(BaseAgent):
             return FilterResult(kept_item_ids=[], filtered_items=[])
 
         user_message = self._build_user_message(items)
-
-        response = await self._call_llm(
-            user_message=user_message,
-            run_id=run_id,
-            max_tokens=4096,
-            temperature=0.2,
-        )
-
         valid_ids = {item.id for item in items}
 
         try:
-            data = self._extract_json(response.content)
+            data = await self._call_llm_structured(
+                user_message=user_message,
+                tool_name="filter_items",
+                tool_description="Evaluate items for relevance and decide which to keep or filter out",
+                output_schema=self.OUTPUT_SCHEMA,
+                run_id=run_id,
+                max_tokens=4096,
+                temperature=0.2,
+            )
             result = FilterResult.from_json(data, valid_ids)
 
             # Safety: any items not mentioned in either list → keep them
@@ -109,8 +162,8 @@ class FilterAgent(BaseAgent):
             )
             return result
 
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.warning("Failed to parse filter response: %s — keeping all items", e)
+        except Exception as e:
+            logger.warning("Failed to get structured filter response: %s — keeping all items", e)
             return FilterResult(
                 kept_item_ids=[item.id for item in items],
                 filtered_items=[],

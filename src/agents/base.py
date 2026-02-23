@@ -119,6 +119,62 @@ class BaseAgent:
         except Exception as e:
             logger.error("Failed to save step log: %s", e)
 
+    async def _call_llm_structured(
+        self,
+        user_message: str,
+        tool_name: str,
+        tool_description: str,
+        output_schema: dict,
+        run_id: str | None = None,
+        system_prompt: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> dict:
+        """Call the LLM with tool use to get structured output directly."""
+        if system_prompt is None:
+            system_prompt = self._prompt_template
+
+        step_id = str(uuid4())
+        started_at = datetime.now()
+
+        try:
+            response = await self.llm.generate_structured(
+                model=self.model,
+                system_prompt=system_prompt,
+                user_message=user_message,
+                tool_name=tool_name,
+                tool_description=tool_description,
+                output_schema=output_schema,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+            if run_id:
+                await self._log_step(
+                    step_id=step_id,
+                    run_id=run_id,
+                    started_at=started_at,
+                    response=response,
+                    status="completed",
+                )
+
+            if response.structured_output is None:
+                raise ValueError("LLM returned no structured output")
+
+            return response.structured_output
+
+        except Exception as e:
+            if run_id:
+                await self._log_step(
+                    step_id=step_id,
+                    run_id=run_id,
+                    started_at=started_at,
+                    response=None,
+                    status="failed",
+                    error=str(e),
+                )
+            raise
+
     @staticmethod
     def _extract_json(text: str) -> dict:
         """Extract JSON from LLM response that may contain markdown fences."""

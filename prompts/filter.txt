@@ -30,26 +30,4 @@ The user wants to be freed from noise that doesn't serve their goals. BUT: sligh
   - "moderate": filter below 0.3, standard dedup
   - "relaxed": filter below 0.2, only obvious noise
 
-## Output Format
-Respond ONLY with valid JSON:
-```json
-{
-    "kept_items": [
-        {
-            "id": "item-uuid",
-            "relevance_score": 0.85,
-            "matched_areas": ["area_id_1", "area_id_2"],
-            "reason": "Brief reason why this is relevant"
-        }
-    ],
-    "filtered_items": [
-        {
-            "id": "item-uuid",
-            "relevance_score": 0.15,
-            "filter_type": "irrelevant|duplicate|noise|shallow",
-            "reason": "Specific reason for filtering",
-            "duplicate_of": "other-item-uuid (only if filter_type is duplicate)"
-        }
-    ]
-}
-```
+Use the provided tool to return your filter decisions.
