@@ -108,13 +108,28 @@ async def _fetch_fxtwitter(url: str) -> tuple[str | None, str | None]:
 
     tweet = data.get("tweet") or {}
     tweet_text = tweet.get("text", "").strip()
-    if not tweet_text:
-        return None, "FxTwitter returned empty tweet text"
 
     author = tweet.get("author") or {}
     author_name = author.get("name", "unknown")
     author_handle = author.get("screen_name", "")
     author_line = f"{author_name} (@{author_handle})" if author_handle else author_name
+
+    # Handle Twitter Articles (long-form posts with empty text field)
+    article = tweet.get("article")
+    if not tweet_text and article:
+        article_title = article.get("title", "").strip()
+        article_preview = article.get("preview_text", "").strip()
+        if article_title or article_preview:
+            parts = []
+            if article_title:
+                parts.append(f"**{article_title}**")
+            if article_preview:
+                parts.append(article_preview)
+            tweet_text = "\n\n".join(parts)
+        else:
+            return None, "FxTwitter returned empty tweet text"
+    elif not tweet_text:
+        return None, "FxTwitter returned empty tweet text"
 
     # Append quoted tweet text if present
     quote = tweet.get("quote")
