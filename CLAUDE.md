@@ -17,7 +17,7 @@ An AI-powered Telegram bot that collects notes, links, and ideas throughout the 
 | UI | Telegram bot |
 | Output | Markdown files in Obsidian vault |
 | Deployment | Docker / docker-compose |
-| Tests | None (manual testing only) |
+| Tests | pytest + pytest-asyncio (run: `pytest tests/`) |
 
 ## How to Run
 
@@ -40,29 +40,29 @@ src/
 ├── config.py                  # Dataclass-based config from .env + user_profile.json
 ├── obsidian_writer.py         # Writes digest to Obsidian vault as YYYY-Www.md
 ├── agents/                    # LLM-powered agents (all extend BaseAgent)
-│   ├── base.py               # BaseAgent: prompt loading, LLM calling, step logging
-│   ├── collector.py           # Classifies & summarizes incoming messages
-│   ├── clusterer.py           # Groups items into 3-6 topic clusters
-│   ├── filter.py              # Filters irrelevant/duplicate items before digest generation
-│   ├── profiler.py            # Extracts user interests from free-form text for profile setup
+│   ├── base.py               # BaseAgent: prompt loading, LLM calling (_call_llm / _call_llm_structured), step logging
+│   ├── collector.py           # Classifies & summarizes incoming messages (structured output)
+│   ├── clusterer.py           # Groups items into 3-6 topic clusters (structured output)
+│   ├── filter.py              # Filters irrelevant/duplicate items before digest generation (structured output)
+│   ├── profiler.py            # Extracts user interests from free-form text for profile setup (structured output)
 │   ├── researcher.py          # Produces research briefs per cluster
 │   ├── writer.py              # Writes magazine-quality articles per cluster
 │   ├── editor.py              # Assembles final weekly magazine
 │   └── translator.py          # Translates final magazine to user's chosen language
 ├── content/
 │   ├── text_classifier.py     # Regex-based message classification (ARTICLE/TOPIC_SEED/CONTEXT_NOTE)
-│   └── url_parser.py          # Fetches & extracts article text (readability-lxml + BS4 fallback)
+│   └── url_parser.py          # Fetches & extracts article text (readability-lxml + BS4 fallback; Twitter/X via oEmbed → FxTwitter)
 ├── db/
-│   ├── database.py            # Async SQLite interface with schema (items, pipeline_runs, step_logs)
+│   ├── database.py            # Async SQLite interface with schema (items, pipeline_runs, step_logs, settings)
 │   └── models.py              # Dataclasses: Item, Cluster, PipelineRun, StepLog, enums
 ├── llm/
-│   └── provider.py            # LLMProvider protocol, AnthropicProvider, OpenAIProvider, cost estimation
+│   └── provider.py            # LLMProvider protocol, AnthropicProvider, OpenAIProvider; generate() + generate_structured() (tool use), cost estimation
 ├── pipeline/
 │   ├── orchestrator.py        # Runs multi-agent pipeline sequentially
 │   ├── scheduler.py           # Weekly digest schedule (default: Sunday 23:00 Europe/Berlin)
 │   └── status_updater.py      # Real-time Telegram progress updates
 └── telegram/
-    └── bot.py                 # DigestBot: commands (/start, /generate, /items, /delete, /setup, /language, /provider, /estimate, /status, /logs, /cost, /week)
+    └── bot.py                 # DigestBot: commands (/start, /generate, /items, /delete, /setup, /language, /provider, /estimate, /status, /logs, /cost, /week); aliases: /digest→/generate, /lang→/language
 
 prompts/                       # LLM system prompts (one .txt per agent)
 ├── collector.txt
@@ -75,6 +75,7 @@ prompts/                       # LLM system prompts (one .txt per agent)
 ├── translator.txt
 └── system_prompt.txt          # Legacy prompt (Russian)
 
+tests/                         # pytest suite: MockLLMProvider, 17 tests covering provider, base agent, collector, clusterer, filter, profiler
 user_profile.json              # User interests, style prefs, language config (passed to agents)
 data/                          # SQLite database storage (gitignored)
 ```
@@ -85,12 +86,12 @@ data/                          # SQLite database storage (gitignored)
 
 1. User sends Telegram message (text, URL, or mixed)
 2. `text_classifier.py` classifies it as ARTICLE, TOPIC_SEED, or CONTEXT_NOTE
-3. If URL detected: `url_parser.py` fetches and extracts article content
+3. If URL detected: `url_parser.py` fetches and extracts article content (Twitter/X URLs handled via oEmbed API first, with FxTwitter API as fallback; both support Twitter Articles/long-form posts)
 4. `CollectorAgent` summarizes and tags the message via LLM
 5. Item saved to SQLite `items` table
 6. On weekly trigger (or `/generate`): `Orchestrator` runs the pipeline:
-   - **Filter** → evaluates items for relevance, removes duplicates and noise (reports filtered items to user)
-   - **Clusterer** → groups remaining items into 3-6 topic clusters
+   - **Filter** → evaluates items for relevance, removes duplicates and noise (filter types: irrelevant, duplicate, noise, shallow); reports filtered items to user
+   - **Clusterer** → groups remaining items into 3-6 topic clusters; unclustered items go into a "quick bites" list
    - **Researcher** → produces research briefs per cluster (fills gaps)
    - **Writer** → writes magazine-quality article per cluster
    - **Editor** → assembles final Markdown document
@@ -102,9 +103,11 @@ data/                          # SQLite database storage (gitignored)
 
 All agents extend `BaseAgent` (in `src/agents/base.py`), which provides:
 - Prompt loading from `prompts/` directory
-- LLM invocation with configurable model, temperature, and max_tokens
+- LLM invocation via `_call_llm()` (free-text) or `_call_llm_structured()` (tool use → typed dict)
 - Step logging to database (tokens, cost, duration, errors)
 - User profile injection into prompts
+
+**Structured output agents** (Collector, Clusterer, Filter, Profiler) use `_call_llm_structured()` which calls `LLMProvider.generate_structured()` — an Anthropic tool-use / OpenAI function-call that returns a validated dict instead of raw JSON text. Writer, Researcher, Editor, and Translator still use free-text `_call_llm()`.
 
 Agent parameters:
 
@@ -115,14 +118,14 @@ Agent parameters:
 | Filter | 0.2 | 4096 | Sonnet (fast) |
 | Clusterer | 0.3 | 2048 | Sonnet (fast) |
 | Researcher | 0.7 | 2048 | Sonnet (fast) |
-| Writer | 0.8 | 2048-8192 | Sonnet (fast) |
-| Editor | 0.5 | 8192 | Sonnet (fast) |
+| Writer | 0.8 | 2048-8192 | Sonnet (quality) |
+| Editor | 0.5 | 8192 | Sonnet (quality) |
 | Translator | 0.3 | 16384 | Sonnet (fast) |
 
 ### Language & Translation
 
 The pipeline runs entirely in English for better LLM reasoning quality. Translation is an optional final step:
-- Users select their preferred language via `/language` (or `/lang`) with inline keyboard buttons
+- Users select their preferred language via `/language` (alias `/lang`) with inline keyboard buttons
 - Preference is persisted in the `settings` table
 - If the selected language is not English, the `TranslatorAgent` translates the final magazine as Step 5
 - Currently supported: English, Russian
@@ -133,7 +136,7 @@ Four tables in `src/db/database.py`:
 - **items** — collected messages (type, raw_content, source_url, extracted_text, summary, tags, language, week_id, status)
 - **pipeline_runs** — execution history (week_id, status, token totals, cost)
 - **step_logs** — per-agent logs (agent, model, tokens, duration, errors)
-- **settings** — key-value store for user preferences (`digest_language`, `user_profile`, `filtering_strictness`)
+- **settings** — key-value store for user preferences (`digest_language`, `user_profile`, `filtering_strictness`, `llm_provider`)
 
 Indexes: `idx_items_week_id`, `idx_items_status`, `idx_step_logs_run_id`
 
@@ -192,7 +195,7 @@ All config is loaded via `src/config.py` from environment variables (`.env` file
 - Never commit Obsidian vault content
 - Never hardcode user preferences — use `user_profile.json`
 - Never hardcode prompts — use `prompts/*.txt` files
-- No automated tests exist yet — do not assume any test infrastructure
+- Run tests with `pytest tests/` (17 tests; `MockLLMProvider` in `tests/conftest.py` simulates LLM calls without real API calls)
 
 ### Dependencies
 When adding dependencies, update `requirements.txt`. Current dependencies:
@@ -205,6 +208,8 @@ When adding dependencies, update `requirements.txt`. Current dependencies:
 - `lxml>=5.0.0` — HTML/XML processing
 - `aiosqlite>=0.20.0` — Async SQLite
 - `python-dotenv==1.0.1` — .env loading
+- `pytest>=8.0.0` — test runner
+- `pytest-asyncio>=0.24.0` — async test support
 
 ### Docker
 - Base image: `python:3.12-slim`
@@ -222,6 +227,13 @@ When adding dependencies, update `requirements.txt`. Current dependencies:
 
 ### Modifying Agent Behavior
 Edit the corresponding prompt file in `prompts/`. Agent code handles I/O and parsing; the prompt defines the LLM's task.
+
+### `/setup` Profile Wizard
+Three-step `ConversationHandler` flow in `bot.py`:
+1. **Text input** — user describes themselves in free form; `ProfilerAgent` extracts interest areas
+2. **Area review** — inline keyboard shows each area with priority (🔴 High / 🟡 Medium / 🟢 Low / ⬜ Off); tapping cycles through priorities
+3. **Strictness selection** — user picks Strict / Moderate / Relaxed filtering
+Profile saved to `settings` table as JSON. Use `/cancel` to abort at any step.
 
 ### Adding a Telegram Command
 Add a handler method to `DigestBot` in `src/telegram/bot.py` and register it in the `build()` method.
