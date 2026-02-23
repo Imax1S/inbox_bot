@@ -88,6 +88,83 @@ class ProfilerAgent(BaseAgent):
     prompt_file = "profiler.txt"
     agent_name = "profiler"
 
+    OUTPUT_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "user": {
+                "type": "object",
+                "description": "User identity and style preferences",
+                "properties": {
+                    "preferred_name": {
+                        "type": "string",
+                        "description": "User's name extracted from the description, or empty string",
+                    },
+                    "primary_language": {
+                        "type": "string",
+                        "description": "ISO 639-1 code of the description language (e.g. 'en', 'ru')",
+                    },
+                    "core_style_preferences": {
+                        "type": "object",
+                        "properties": {
+                            "practicality_over_theory": {"type": "boolean"},
+                            "depth_over_breadth": {"type": "boolean"},
+                            "systems_thinking": {"type": "boolean"},
+                            "prefers_actionable_outputs": {"type": "boolean"},
+                        },
+                    },
+                },
+            },
+            "interest_areas": {
+                "type": "array",
+                "description": "All interest areas mentioned by the user",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "Descriptive snake_case ID",
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Human readable area name",
+                        },
+                        "weight": {
+                            "type": "number",
+                            "description": "Importance weight 0.40-0.95 based on emphasis in description",
+                        },
+                        "keywords": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "10-20 keywords to help identify content in this area",
+                        },
+                        "must_include_signals": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Signals that make content in this area valuable",
+                        },
+                        "avoid_signals": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Signals that indicate low quality content in this area",
+                        },
+                    },
+                    "required": ["id", "name", "weight", "keywords"],
+                },
+            },
+            "noise_topics": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Topics the user explicitly does NOT want",
+            },
+            "detected_languages": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "ISO 639-1 codes of languages detected in the description",
+            },
+        },
+        "required": ["interest_areas"],
+    }
+
     def __init__(self, llm: LLMProvider, model: str, db: Database):
         super().__init__(llm, model, db)
 
@@ -96,20 +173,20 @@ class ProfilerAgent(BaseAgent):
 
         Returns a dict with: user, interest_areas, noise_topics, detected_languages.
         """
-        response = await self._call_llm(
-            user_message=f"User's self-description:\n\n{user_text}",
-            max_tokens=4096,
-            temperature=0.3,
-        )
-
         try:
-            data = self._extract_json(response.content)
-            # Validate minimum structure
+            data = await self._call_llm_structured(
+                user_message=f"User's self-description:\n\n{user_text}",
+                tool_name="extract_interests",
+                tool_description="Extract user interest areas, style preferences, and noise topics from their self-description",
+                output_schema=self.OUTPUT_SCHEMA,
+                max_tokens=4096,
+                temperature=0.3,
+            )
             if "interest_areas" not in data:
                 data["interest_areas"] = []
             return data
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.warning("Failed to parse profiler response: %s", e)
+        except Exception as e:
+            logger.warning("Failed to get structured profiler response: %s", e)
             return {"interest_areas": [], "error": str(e)}
 
     @staticmethod

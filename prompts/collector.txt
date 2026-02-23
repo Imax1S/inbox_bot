@@ -16,12 +16,4 @@ Your job: given a user's message (which may be a URL with extracted article text
 - If the content is mixed-language, use the dominant language
 - For short notes (context_note type), still generate relevant tags based on the topic
 
-## Output Format
-Respond ONLY with valid JSON, no other text:
-```json
-{
-    "summary": "2-3 sentence summary of the content",
-    "tags": ["tag1", "tag2", "tag3"],
-    "language": "en"
-}
-```
+Use the provided tool to return your classification result.

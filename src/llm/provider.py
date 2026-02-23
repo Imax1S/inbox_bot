@@ -1,6 +1,7 @@
 """LLM provider abstraction with token tracking for Anthropic and OpenAI."""
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from typing import Protocol
 
 
@@ -10,6 +11,7 @@ class LLMResponse:
     input_tokens: int
     output_tokens: int
     model: str
+    structured_output: dict | None = field(default=None)
 
 
 class LLMProvider(Protocol):
@@ -18,6 +20,18 @@ class LLMProvider(Protocol):
         model: str,
         system_prompt: str,
         user_message: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> LLMResponse: ...
+
+    async def generate_structured(
+        self,
+        model: str,
+        system_prompt: str,
+        user_message: str,
+        tool_name: str,
+        tool_description: str,
+        output_schema: dict,
         max_tokens: int = 4096,
         temperature: float = 0.7,
     ) -> LLMResponse: ...
@@ -51,6 +65,43 @@ class AnthropicProvider:
             model=model,
         )
 
+    async def generate_structured(
+        self,
+        model: str,
+        system_prompt: str,
+        user_message: str,
+        tool_name: str,
+        tool_description: str,
+        output_schema: dict,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> LLMResponse:
+        response = await self.client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+            tools=[{
+                "name": tool_name,
+                "description": tool_description,
+                "input_schema": output_schema,
+            }],
+            tool_choice={"type": "tool", "name": tool_name},
+        )
+        structured = None
+        for block in response.content:
+            if block.type == "tool_use":
+                structured = block.input
+                break
+        return LLMResponse(
+            content=json.dumps(structured) if structured else "",
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            model=model,
+            structured_output=structured,
+        )
+
 
 class OpenAIProvider:
     def __init__(self, api_key: str):
@@ -82,6 +133,48 @@ class OpenAIProvider:
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
             model=model,
+        )
+
+    async def generate_structured(
+        self,
+        model: str,
+        system_prompt: str,
+        user_message: str,
+        tool_name: str,
+        tool_description: str,
+        output_schema: dict,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> LLMResponse:
+        response = await self.client.chat.completions.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            tools=[{
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": tool_description,
+                    "parameters": output_schema,
+                },
+            }],
+            tool_choice={"type": "function", "function": {"name": tool_name}},
+        )
+        choice = response.choices[0]
+        usage = response.usage
+        structured = None
+        if choice.message.tool_calls:
+            structured = json.loads(choice.message.tool_calls[0].function.arguments)
+        return LLMResponse(
+            content=json.dumps(structured) if structured else "",
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
+            model=model,
+            structured_output=structured,
         )
 
 
