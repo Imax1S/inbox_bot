@@ -1,6 +1,7 @@
 """Fetch and extract article content from URLs."""
 
 import logging
+import re
 from urllib.parse import urlparse
 
 import httpx
@@ -79,6 +80,11 @@ async def _fetch_twitter_oembed(url: str) -> tuple[str | None, str | None]:
             p = blockquote.find("p")
             if p:
                 tweet_text = p.get_text(separator=" ", strip=True)
+                # If the tweet text is only a URL, this is likely a Twitter Article —
+                # return None so the caller falls back to FxTwitter which has the full content.
+                meaningful_text = re.sub(r"https?://\S+", "", tweet_text).strip()
+                if not meaningful_text:
+                    return None, "Tweet contains only a link (likely a Twitter Article)"
                 author_line = f"{author_name} ({handle})" if handle else author_name
                 return f"Tweet by {author_line}:\n\n{tweet_text}", None
     except Exception as e:
