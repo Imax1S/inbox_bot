@@ -92,7 +92,7 @@ class DigestBot:
         self._generating = False
 
     def _is_authorized(self, user_id: int) -> bool:
-        return user_id == self.config.telegram.user_id
+        return user_id in self.config.telegram.user_ids
 
     # ── Message Handler ──
 

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TelegramConfig:
     bot_token: str
-    user_id: int
+    user_ids: list[int]
 
 
 @dataclass
@@ -64,6 +64,30 @@ def get_provider_defaults(provider: str) -> tuple[str, str]:
         return ("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-20250929")
 
 
+def _parse_telegram_user_ids() -> list[int]:
+    """Parse authorized Telegram user IDs from env.
+
+    Requires TELEGRAM_USER_IDS as a comma-separated list of integers.
+    """
+    raw_ids = os.getenv("TELEGRAM_USER_IDS", "").strip()
+    if not raw_ids:
+        raise ValueError("TELEGRAM_USER_IDS is required")
+
+    parts = [p.strip() for p in raw_ids.split(",") if p.strip()]
+    try:
+        parsed = [int(p) for p in parts]
+    except ValueError as exc:
+        raise ValueError("TELEGRAM_USER_IDS must contain comma-separated integers") from exc
+
+    # Preserve order while removing duplicates.
+    unique_ids: list[int] = []
+    for user_id in parsed:
+        if user_id not in unique_ids:
+            unique_ids.append(user_id)
+
+    return unique_ids
+
+
 def load_config() -> Config:
     """Load configuration from environment variables and files."""
     load_dotenv()
@@ -90,7 +114,7 @@ def load_config() -> Config:
     return Config(
         telegram=TelegramConfig(
             bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
-            user_id=int(os.getenv("TELEGRAM_USER_ID", "0")),
+            user_ids=_parse_telegram_user_ids(),
         ),
         llm=LLMConfig(
             provider=provider,

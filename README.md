@@ -37,7 +37,7 @@ Every agent is LLM-powered and personalised to your interests (set up via `/setu
 
 ```bash
 cp .env.example .env
-# Fill in: TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, ANTHROPIC_API_KEY
+# Fill in: TELEGRAM_BOT_TOKEN, TELEGRAM_USER_IDS, ANTHROPIC_API_KEY
 
 # Docker (recommended)
 docker-compose up

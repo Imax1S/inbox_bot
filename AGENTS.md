@@ -2,7 +2,7 @@
 
 - **Purpose:** Telegram bot that collects notes, links, and ideas throughout the week, then processes them through a multi-agent LLM pipeline to generate structured weekly digest notes for Obsidian.
 - **Runtime:** Python 3.11+ (3.12 in Docker). Install deps with `pip install -r requirements.txt` or run `docker-compose up`. Start with `python -m src.main`.
-- **Secrets/config:** Copy `.env.example` → `.env` and set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`, `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` with `LLM_PROVIDER=openai`). Vault path set via `OBSIDIAN_VAULT_PATH` (default `/vault/life/weekly`). User interests in `user_profile.json`; edit that file rather than hardcoding.
+- **Secrets/config:** Copy `.env.example` → `.env` and set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_IDS` (comma-separated), `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` with `LLM_PROVIDER=openai`). Vault path set via `OBSIDIAN_VAULT_PATH` (default `/vault/life/weekly`). User interests in `user_profile.json`; edit that file rather than hardcoding.
 
 ## Key Files
 

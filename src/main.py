@@ -147,7 +147,7 @@ def main() -> None:
         app=app,
         config=config.schedule,
         orchestrator=orchestrator,
-        chat_id=config.telegram.user_id,
+        chat_ids=config.telegram.user_ids,
     )
 
     # Run

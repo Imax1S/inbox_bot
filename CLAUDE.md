@@ -30,7 +30,7 @@ pip install -r requirements.txt
 python -m src.main
 ```
 
-The app requires a `.env` file — copy from `.env.example` and fill in secrets. Required variables: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_ID`, `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` with `LLM_PROVIDER=openai`).
+The app requires a `.env` file — copy from `.env.example` and fill in secrets. Required variables: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_USER_IDS` (comma-separated), `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` with `LLM_PROVIDER=openai`).
 
 ## Project Structure
 
@@ -149,7 +149,7 @@ All config is loaded via `src/config.py` from environment variables (`.env` file
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Bot token from @BotFather |
-| `TELEGRAM_USER_ID` | Yes | — | Numeric Telegram user ID (access control) |
+| `TELEGRAM_USER_IDS` | Yes | — | Comma-separated Telegram user IDs (access control) |
 | `LLM_PROVIDER` | No | `anthropic` | `"anthropic"` or `"openai"` |
 | `ANTHROPIC_API_KEY` | Conditional | — | Required if provider is anthropic |
 | `OPENAI_API_KEY` | Conditional | — | Required if provider is openai |

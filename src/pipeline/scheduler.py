@@ -17,11 +17,14 @@ def setup_schedule(
     app: Application,
     config: ScheduleConfig,
     orchestrator: Orchestrator,
-    chat_id: int,
+    chat_ids: list[int],
 ) -> None:
     """Set up the weekly digest generation schedule."""
     if not config.enabled:
         logger.info("Scheduled digest generation is disabled")
+        return
+    if not chat_ids:
+        logger.warning("No authorized Telegram user IDs configured; scheduler disabled")
         return
 
     try:
@@ -42,27 +45,32 @@ def setup_schedule(
         week_id = Database.current_week_id()
         logger.info("Scheduled generation triggered for %s", week_id)
 
-        status_updater = StatusUpdater(context.bot, chat_id)
+        # Reuse one status thread for progress while broadcasting final output.
+        status_updater = StatusUpdater(context.bot, chat_ids[0])
         try:
             result = await orchestrator.run(week_id, status_updater)
             if result:
-                await context.bot.send_document(
-                    chat_id=chat_id,
-                    document=open(result, "rb"),
-                    filename=f"digest-{week_id}.md",
-                    caption=f"📖 Your weekly digest for {week_id} is ready!",
-                )
+                for chat_id in chat_ids:
+                    with open(result, "rb") as f:
+                        await context.bot.send_document(
+                            chat_id=chat_id,
+                            document=f,
+                            filename=f"digest-{week_id}.md",
+                            caption=f"📖 Your weekly digest for {week_id} is ready!",
+                        )
             else:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"No items collected for {week_id}. Skipping digest.",
-                )
+                for chat_id in chat_ids:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"No items collected for {week_id}. Skipping digest.",
+                    )
         except Exception as e:
             logger.exception("Scheduled generation failed: %s", e)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"❌ Scheduled digest generation failed: {e}",
-            )
+            for chat_id in chat_ids:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ Scheduled digest generation failed: {e}",
+                )
 
     # Schedule using python-telegram-bot's JobQueue
     # days is a tuple of integers: (0=Monday, ..., 6=Sunday)
