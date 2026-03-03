@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -13,6 +14,14 @@ from .db.database import Database
 from .db.models import Item, ItemStatus, ItemType
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PollResult:
+    """Result of polling all RSS feeds."""
+
+    total_added: int = 0
+    items: list[dict] = field(default_factory=list)  # {feed_title, title, link}
 
 # How often to poll feeds (in seconds): every 2 hours
 RSS_POLL_INTERVAL_SECONDS = 2 * 60 * 60
@@ -54,17 +63,17 @@ class RSSFetcher:
         db: Database,
         collector_agent: CollectorAgent,
         user_id: int,
-    ) -> int:
+    ) -> PollResult:
         """Poll all subscribed feeds and add new entries as items.
 
-        Returns the number of new items added.
+        Returns a PollResult with count and details of added items.
         """
         feeds = await db.get_rss_feeds()
         if not feeds:
             logger.debug("No RSS feeds configured, skipping poll")
-            return 0
+            return PollResult()
 
-        total_added = 0
+        poll_result = PollResult()
 
         for feed_record in feeds:
             feed_id = feed_record["id"]
@@ -165,6 +174,11 @@ class RSSFetcher:
                 )
                 await db.save_item(item)
                 added_count += 1
+                poll_result.items.append({
+                    "feed_title": feed_record["title"] or feed_url,
+                    "title": entry["title"],
+                    "link": entry_link,
+                })
 
                 logger.info(
                     "Added RSS item: %s from %s",
@@ -180,11 +194,11 @@ class RSSFetcher:
                 last_entry_id=newest_entry_id,
             )
 
-            total_added += added_count
+            poll_result.total_added += added_count
             logger.info(
                 "RSS feed %s: added %d new item(s)",
                 feed_record["title"] or feed_url,
                 added_count,
             )
 
-        return total_added
+        return poll_result

@@ -175,8 +175,8 @@ async def test_poll_all_feeds_no_feeds(mock_db):
         llm=provider, model="test", db=mock_db, user_profile={"interest_areas": []},
     )
     fetcher = RSSFetcher()
-    added = await fetcher.poll_all_feeds(db=mock_db, collector_agent=collector, user_id=123)
-    assert added == 0
+    result = await fetcher.poll_all_feeds(db=mock_db, collector_agent=collector, user_id=123)
+    assert result.total_added == 0
 
 
 @pytest.mark.asyncio
@@ -206,11 +206,11 @@ async def test_poll_all_feeds_skips_seen_entries(mock_db, sample_user_profile):
 
     fetcher = RSSFetcher()
     with patch("src.rss_fetcher.feedparser.parse", return_value=mock_feed):
-        added = await fetcher.poll_all_feeds(
+        result = await fetcher.poll_all_feeds(
             db=mock_db, collector_agent=collector, user_id=123
         )
 
-    assert added == 0
+    assert result.total_added == 0
 
 
 @pytest.mark.asyncio
@@ -236,11 +236,14 @@ async def test_poll_all_feeds_adds_new_entries(mock_db, sample_user_profile):
     with patch("src.rss_fetcher.feedparser.parse", return_value=mock_feed), \
          patch("src.rss_fetcher.fetch_and_extract", new_callable=AsyncMock) as mock_extract:
         mock_extract.return_value = ("Full article text here", None)
-        added = await fetcher.poll_all_feeds(
+        result = await fetcher.poll_all_feeds(
             db=mock_db, collector_agent=collector, user_id=123
         )
 
-    assert added == 1
+    assert result.total_added == 1
+    assert len(result.items) == 1
+    assert result.items[0]["title"] == "New Post"
+    assert result.items[0]["feed_title"] == "Test Feed"
 
     # Verify the item was saved
     items = await mock_db.get_items_by_week()
