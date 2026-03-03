@@ -34,6 +34,7 @@ from ..db.models import Item, ItemStatus, ItemType
 from ..llm.provider import create_provider, estimate_cost
 from ..pipeline.orchestrator import Orchestrator
 from ..pipeline.status_updater import StatusUpdater
+from ..rss_fetcher import fetch_feed
 
 logger = logging.getLogger(__name__)
 
@@ -1046,6 +1047,116 @@ class DigestBot:
         context.user_data.pop("setup_areas", None)
         return ConversationHandler.END
 
+    # ── RSS Feed Management (/rss) ──
+
+    async def _handle_rss(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        args = context.args or []
+        if not args:
+            await update.message.reply_text(
+                "Usage:\n"
+                "/rss add <url> — Subscribe to an RSS feed\n"
+                "/rss list — Show subscribed feeds\n"
+                "/rss remove <number> — Unsubscribe by number"
+            )
+            return
+
+        subcommand = args[0].lower()
+
+        if subcommand == "add":
+            await self._rss_add(update, args[1:])
+        elif subcommand == "list":
+            await self._rss_list(update)
+        elif subcommand == "remove":
+            await self._rss_remove(update, args[1:])
+        else:
+            await update.message.reply_text(
+                f"Unknown subcommand: {subcommand}\n"
+                "Use: /rss add, /rss list, or /rss remove"
+            )
+
+    async def _rss_add(self, update: Update, args: list[str]) -> None:
+        if not args:
+            await update.message.reply_text("Usage: /rss add <url>")
+            return
+
+        url = args[0].strip()
+
+        # Basic URL validation
+        if not url.startswith(("http://", "https://")):
+            await update.message.reply_text("Please provide a valid URL starting with http:// or https://")
+            return
+
+        # Check for duplicate
+        feeds = await self.db.get_rss_feeds()
+        if any(f["url"] == url for f in feeds):
+            await update.message.reply_text("This feed is already subscribed.")
+            return
+
+        # Try to fetch the feed to validate it
+        await update.message.reply_text("🔍 Checking feed...")
+        try:
+            title, entries = await fetch_feed(url)
+        except Exception as e:
+            logger.warning("Failed to fetch RSS feed %s: %s", url, e)
+            await update.message.reply_text(f"Could not fetch feed: {e}")
+            return
+
+        if not title and not entries:
+            await update.message.reply_text(
+                "Could not parse this URL as an RSS feed. "
+                "Please check the URL and try again."
+            )
+            return
+
+        feed_title = title or url
+        await self.db.add_rss_feed(url, feed_title)
+        entry_count = len(entries)
+        await update.message.reply_text(
+            f"✅ Subscribed to: {feed_title}\n"
+            f"📰 {entry_count} entries found in feed"
+        )
+
+    async def _rss_list(self, update: Update) -> None:
+        feeds = await self.db.get_rss_feeds()
+        if not feeds:
+            await update.message.reply_text("No RSS feeds subscribed. Use /rss add <url> to add one.")
+            return
+
+        lines = ["📡 Subscribed RSS feeds:\n"]
+        for i, feed in enumerate(feeds, 1):
+            lines.append(f"{i}. {feed['title']}\n   {feed['url']}")
+        await update.message.reply_text("\n".join(lines))
+
+    async def _rss_remove(self, update: Update, args: list[str]) -> None:
+        if not args:
+            await update.message.reply_text("Usage: /rss remove <number>\nUse /rss list to see feed numbers.")
+            return
+
+        try:
+            index = int(args[0])
+        except ValueError:
+            await update.message.reply_text("Please provide a valid number. Use /rss list to see feed numbers.")
+            return
+
+        feeds = await self.db.get_rss_feeds()
+        if index < 1 or index > len(feeds):
+            await update.message.reply_text(
+                f"Invalid number. You have {len(feeds)} feed(s). Use /rss list to see them."
+            )
+            return
+
+        feed = feeds[index - 1]
+        await self.db.remove_rss_feed(feed["id"])
+        await update.message.reply_text(f"🗑 Removed: {feed['title']}")
+
     # ── Bot Setup ──
 
     @staticmethod
@@ -1064,6 +1175,7 @@ class DigestBot:
             BotCommand("logs", "Show last pipeline run logs"),
             BotCommand("cost", "Show token usage & cost report"),
             BotCommand("week", "Current week info & stats"),
+            BotCommand("rss", "Manage RSS feed subscriptions"),
         ])
 
     def build(self) -> Application:
@@ -1122,6 +1234,7 @@ class DigestBot:
         self.app.add_handler(
             CallbackQueryHandler(self._handle_language_callback, pattern=r"^lang:")
         )
+        self.app.add_handler(CommandHandler("rss", self._handle_rss))
         # Also keep /digest as an alias for /generate
         self.app.add_handler(CommandHandler("digest", self._handle_generate))
         self.app.add_handler(

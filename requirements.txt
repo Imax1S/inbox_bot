@@ -17,6 +17,9 @@ aiosqlite>=0.20.0
 # Utils
 python-dotenv==1.0.1
 
+# RSS
+feedparser>=6.0.0
+
 # Testing
 pytest>=8.0.0
 pytest-asyncio>=0.24.0

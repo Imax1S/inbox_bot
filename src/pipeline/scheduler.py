@@ -1,14 +1,16 @@
-"""Weekly digest scheduler — auto-triggers pipeline on configured day/time."""
+"""Weekly digest scheduler — auto-triggers pipeline on configured day/time + RSS polling."""
 
 import datetime
 import logging
 
 from telegram.ext import Application, ContextTypes
 
+from ..agents.collector import CollectorAgent
 from ..config import ScheduleConfig
 from ..db.database import Database
 from ..pipeline.orchestrator import Orchestrator
 from ..pipeline.status_updater import StatusUpdater
+from ..rss_fetcher import RSS_POLL_INTERVAL_SECONDS, poll_all_feeds
 
 logger = logging.getLogger(__name__)
 
@@ -89,4 +91,40 @@ def setup_schedule(
         config.hour,
         config.minute,
         config.timezone,
+    )
+
+
+def setup_rss_schedule(
+    app: Application,
+    db: Database,
+    collector: CollectorAgent,
+    chat_ids: list[int],
+) -> None:
+    """Set up periodic RSS feed polling (every 2 hours)."""
+    if not chat_ids:
+        logger.warning("No authorized Telegram user IDs configured; RSS scheduler disabled")
+        return
+
+    user_id = chat_ids[0]
+
+    async def scheduled_rss_poll(context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Callback for periodic RSS feed polling."""
+        logger.info("Scheduled RSS poll triggered")
+        try:
+            new_count = await poll_all_feeds(db, collector, user_id)
+            if new_count > 0:
+                logger.info("RSS poll added %d new items", new_count)
+        except Exception as e:
+            logger.exception("Scheduled RSS poll failed: %s", e)
+
+    app.job_queue.run_repeating(
+        callback=scheduled_rss_poll,
+        interval=RSS_POLL_INTERVAL_SECONDS,
+        first=60,  # first poll 60 seconds after startup
+        name="rss_poll",
+    )
+
+    logger.info(
+        "Scheduled RSS polling every %d seconds",
+        RSS_POLL_INTERVAL_SECONDS,
     )
