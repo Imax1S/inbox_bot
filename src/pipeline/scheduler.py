@@ -10,7 +10,7 @@ from ..config import ScheduleConfig
 from ..db.database import Database
 from ..pipeline.orchestrator import Orchestrator
 from ..pipeline.status_updater import StatusUpdater
-from ..rss_fetcher import RSSFetcher, RSS_POLL_INTERVAL_SECONDS
+from ..rss_fetcher import PollResult, RSSFetcher, RSS_POLL_INTERVAL_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -111,13 +111,14 @@ def setup_rss_schedule(
         """Callback for periodic RSS feed polling."""
         logger.info("RSS poll triggered")
         try:
-            added = await rss_fetcher.poll_all_feeds(
+            poll_result = await rss_fetcher.poll_all_feeds(
                 db=db,
                 collector_agent=collector,
                 user_id=chat_ids[0],
             )
-            if added > 0:
-                logger.info("RSS poll added %d new item(s)", added)
+            if poll_result.total_added > 0:
+                logger.info("RSS poll added %d new item(s)", poll_result.total_added)
+                await _notify_rss_updates(context, chat_ids, poll_result)
         except Exception as e:
             logger.exception("RSS poll failed: %s", e)
 
@@ -132,3 +133,36 @@ def setup_rss_schedule(
         "RSS feed polling scheduled: every %d seconds",
         RSS_POLL_INTERVAL_SECONDS,
     )
+
+
+async def _notify_rss_updates(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_ids: list[int],
+    poll_result: PollResult,
+) -> None:
+    """Send Telegram notification about new RSS items."""
+    # Group items by feed
+    by_feed: dict[str, list[dict]] = {}
+    for item in poll_result.items:
+        by_feed.setdefault(item["feed_title"], []).append(item)
+
+    lines = [f"📡 <b>{poll_result.total_added} new RSS article(s)</b>\n"]
+    for feed_title, items in by_feed.items():
+        lines.append(f"<b>{feed_title}</b>")
+        for item in items:
+            title = item["title"] or item["link"]
+            lines.append(f"  • <a href=\"{item['link']}\">{title}</a>")
+        lines.append("")
+
+    text = "\n".join(lines).strip()
+
+    for chat_id in chat_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            logger.warning("Failed to send RSS notification to %s: %s", chat_id, e)
