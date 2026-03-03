@@ -17,7 +17,7 @@ from .db.database import Database
 from .llm.provider import create_provider
 from .obsidian_writer import ObsidianWriter
 from .pipeline.orchestrator import Orchestrator
-from .pipeline.scheduler import setup_schedule
+from .pipeline.scheduler import setup_rss_polling, setup_schedule
 from .telegram.bot import DigestBot
 
 
@@ -147,6 +147,14 @@ def main() -> None:
         app=app,
         config=config.schedule,
         orchestrator=orchestrator,
+        chat_ids=config.telegram.user_ids,
+    )
+
+    # Set up RSS feed polling
+    setup_rss_polling(
+        app=app,
+        db=db,
+        collector=collector,
         chat_ids=config.telegram.user_ids,
     )
 
