@@ -67,6 +67,17 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS rss_feeds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    last_fetched_at TEXT,
+    last_entry_id TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_rss_feeds_url ON rss_feeds(url);
 """
 
 
@@ -368,6 +379,71 @@ class Database:
                 (key, value),
             )
             await db.commit()
+
+    # ── RSS Feeds ──
+
+    async def add_rss_feed(self, url: str, title: str = "") -> int:
+        """Add a new RSS feed. Returns the new feed's ID."""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """INSERT INTO rss_feeds (url, title, created_at)
+                   VALUES (?, ?, ?)""",
+                (url, title, _dt_to_str(datetime.now(timezone.utc))),
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def get_rss_feeds(self) -> list[dict]:
+        """Return all RSS feeds as a list of dicts."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM rss_feeds ORDER BY created_at ASC"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [
+                    {
+                        "id": row["id"],
+                        "url": row["url"],
+                        "title": row["title"],
+                        "last_fetched_at": row["last_fetched_at"],
+                        "last_entry_id": row["last_entry_id"],
+                        "created_at": row["created_at"],
+                    }
+                    for row in rows
+                ]
+
+    async def remove_rss_feed(self, feed_id: int) -> bool:
+        """Remove an RSS feed by its ID. Returns True if a row was deleted."""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "DELETE FROM rss_feeds WHERE id = ?", (feed_id,)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def update_rss_feed_checkpoint(
+        self, feed_id: int, last_fetched_at: str, last_entry_id: str
+    ) -> None:
+        """Update the checkpoint (last_fetched_at and last_entry_id) for a feed."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """UPDATE rss_feeds
+                   SET last_fetched_at = ?, last_entry_id = ?
+                   WHERE id = ?""",
+                (last_fetched_at, last_entry_id, feed_id),
+            )
+            await db.commit()
+
+    async def item_exists_by_source_url(self, source_url: str) -> bool:
+        """Check if an item with the given source_url already exists."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT 1 FROM items WHERE source_url = ? LIMIT 1",
+                (source_url,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row is not None
 
     # ── Utilities ──
 
