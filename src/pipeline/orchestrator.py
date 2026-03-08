@@ -103,6 +103,7 @@ class Orchestrator:
                             "summary": filtered_item.summary[:80] if filtered_item else fi.id[:8],
                             "reason": fi.reason,
                             "type": fi.filter_type,
+                            "score": fi.relevance_score,
                         })
 
                     # Keep only items that passed the filter
@@ -241,19 +242,32 @@ class Orchestrator:
 
             # Send filter report if items were filtered
             if filter_report and status_updater:
+                # Get drop_below threshold from filter agent profile
+                drop_below = 0.25  # default moderate
+                if self.filter_agent:
+                    thresholds = self.filter_agent.user_profile.get(
+                        "scoring_hints_for_python", {}
+                    ).get("thresholds", {})
+                    drop_below = thresholds.get("drop_below", 0.25)
+
                 report_lines = [
-                    f"🗑 Filtered {len(filter_report)} item(s):\n"
+                    f"🗑 Filtered {len(filter_report)} item(s) "
+                    f"(drop_below={drop_below:.2f}):\n"
                 ]
+                type_icon = {
+                    "irrelevant": "🚫",
+                    "duplicate": "🔄",
+                    "noise": "🗑",
+                    "shallow": "📉",
+                }
                 for entry in filter_report:
-                    type_icon = {
-                        "irrelevant": "🚫",
-                        "duplicate": "🔄",
-                        "noise": "🗑",
-                        "shallow": "📉",
-                    }
                     icon = type_icon.get(entry["type"], "❌")
+                    score = entry.get("score", 0.0)
+                    gap = drop_below - score
+                    score_str = f"score={score:.2f}, -{gap:.2f} to threshold"
                     report_lines.append(
-                        f"{icon} {entry['summary']}\n   → {entry['reason']}"
+                        f"{icon} {entry['summary']}\n"
+                        f"   [{score_str}] → {entry['reason']}"
                     )
                 await status_updater.send_message("\n".join(report_lines))
 

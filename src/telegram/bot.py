@@ -185,9 +185,11 @@ class DigestBot:
             "I'll process everything into a polished weekly magazine.\n\n"
             "Commands:\n"
             "/generate — Generate digest now\n"
+            "/regenerate [week] — Re-generate from existing items\n"
             "/items — List this week's items\n"
             "/delete <id> — Remove an item\n"
             "/setup — Configure your interest profile\n"
+            "/threshold [value] — View/set filter drop_below threshold\n"
             "/language — Choose digest language\n"
             "/provider — Switch LLM provider\n"
             "/estimate — Estimate generation cost\n"
@@ -773,6 +775,149 @@ class DigestBot:
         await query.answer(f"Language set to {label}")
         await query.edit_message_text(f"✅ Digest language set to {label}")
 
+    # ── Filter Threshold (/threshold) ──
+
+    async def _handle_threshold(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        profile_json = await self.db.get_setting("user_profile")
+        if not profile_json:
+            await update.message.reply_text(
+                "No profile configured. Run /setup first."
+            )
+            return
+
+        profile = json.loads(profile_json)
+        thresholds = profile.get("scoring_hints_for_python", {}).get("thresholds", {})
+        current_drop = thresholds.get("drop_below", 0.25)
+        strictness = profile.get("filtering_strictness", "moderate")
+
+        args = context.args
+        if not args:
+            await update.message.reply_text(
+                f"🎚 *Filter threshold (drop\\_below)*: `{current_drop:.2f}`\n"
+                f"Strictness level: {strictness}\n\n"
+                f"Items with score below this value are filtered out.\n\n"
+                f"Usage: `/threshold <value>` (0.0–1.0)\n"
+                f"Example: `/threshold 0.15`\n\n"
+                f"Presets: strict=0.40, moderate=0.25, relaxed=0.15",
+                parse_mode="Markdown",
+            )
+            return
+
+        try:
+            new_value = float(args[0])
+        except ValueError:
+            await update.message.reply_text(
+                "Invalid value. Use a number between 0.0 and 1.0."
+            )
+            return
+
+        if not 0.0 <= new_value <= 1.0:
+            await update.message.reply_text("Value must be between 0.0 and 1.0.")
+            return
+
+        # Update profile in place
+        if "scoring_hints_for_python" not in profile:
+            profile["scoring_hints_for_python"] = {}
+        if "thresholds" not in profile["scoring_hints_for_python"]:
+            profile["scoring_hints_for_python"]["thresholds"] = {}
+        profile["scoring_hints_for_python"]["thresholds"]["drop_below"] = new_value
+
+        await self.db.set_setting("user_profile", json.dumps(profile, ensure_ascii=False))
+
+        if hasattr(self.orchestrator, "filter_agent") and self.orchestrator.filter_agent:
+            self.orchestrator.filter_agent.update_profile(profile)
+
+        await update.message.reply_text(
+            f"✅ drop\\_below updated: `{current_drop:.2f}` → `{new_value:.2f}`\n"
+            f"Items with score below {new_value:.2f} will be filtered out.",
+            parse_mode="Markdown",
+        )
+
+    # ── Regenerate digest (/regenerate) ──
+
+    async def _handle_regenerate(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        if self._generating:
+            await update.message.reply_text("⏳ Generation already in progress.")
+            return
+
+        args = context.args
+        if args:
+            week_id = args[0]
+            import re as _re
+            if not _re.match(r"^\d{4}-W\d{2}$", week_id):
+                await update.message.reply_text(
+                    "Invalid week format. Use YYYY-Www, e.g. `2026-W09`",
+                    parse_mode="Markdown",
+                )
+                return
+        else:
+            week_id = Database.current_week_id()
+
+        all_items = await self.db.get_items_by_week(week_id)
+        if not all_items:
+            await update.message.reply_text(f"No items found for {week_id}.")
+            return
+
+        published_items = [i for i in all_items if i.status == ItemStatus.PUBLISHED]
+        collected_items = [i for i in all_items if i.status == ItemStatus.COLLECTED]
+
+        if not published_items and not collected_items:
+            await update.message.reply_text(f"No items found for {week_id}.")
+            return
+
+        if published_items:
+            await self.db.update_items_status(
+                [i.id for i in published_items], ItemStatus.COLLECTED
+            )
+
+        total = len(all_items)
+        reset_count = len(published_items)
+        await update.message.reply_text(
+            f"♻️ Regenerating digest for {week_id}\n"
+            f"Total items: {total}"
+            + (f" ({reset_count} reset from PUBLISHED)" if reset_count else "")
+        )
+
+        self._generating = True
+        status_updater = StatusUpdater(context.bot, update.effective_chat.id)
+
+        try:
+            result = await self.orchestrator.run(week_id, status_updater)
+            if result:
+                try:
+                    with open(result, "rb") as f:
+                        await context.bot.send_document(
+                            chat_id=update.effective_chat.id,
+                            document=f,
+                            filename=f"digest-{week_id}.md",
+                            caption="📖 Your weekly digest is ready!",
+                        )
+                except Exception as e:
+                    logger.error("Failed to send document: %s", e)
+                    await update.message.reply_text(
+                        f"✅ Digest generated and saved to: {result}"
+                    )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Generation failed: {e}")
+        finally:
+            self._generating = False
+
     # ── Profile Setup (/setup) ──
 
     async def _handle_setup(
@@ -1170,9 +1315,11 @@ class DigestBot:
         await application.bot.set_my_commands([
             BotCommand("start", "Show welcome message & help"),
             BotCommand("generate", "Generate weekly digest now"),
+            BotCommand("regenerate", "Re-generate digest from existing items"),
             BotCommand("items", "List this week's collected items"),
             BotCommand("delete", "Remove an item by ID"),
             BotCommand("setup", "Configure your interest profile"),
+            BotCommand("threshold", "View/set filter drop_below threshold"),
             BotCommand("language", "Choose digest language (RU/EN)"),
             BotCommand("provider", "Switch LLM provider"),
             BotCommand("estimate", "Estimate generation cost"),
@@ -1221,6 +1368,8 @@ class DigestBot:
 
         self.app.add_handler(CommandHandler("start", self._handle_start))
         self.app.add_handler(CommandHandler("generate", self._handle_generate))
+        self.app.add_handler(CommandHandler("regenerate", self._handle_regenerate))
+        self.app.add_handler(CommandHandler("threshold", self._handle_threshold))
         self.app.add_handler(CommandHandler("items", self._handle_items))
         self.app.add_handler(CommandHandler("delete", self._handle_delete))
         self.app.add_handler(CommandHandler("status", self._handle_status))
