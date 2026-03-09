@@ -35,6 +35,7 @@ from ..llm.provider import create_provider, estimate_cost
 from ..pipeline.orchestrator import Orchestrator
 from ..pipeline.status_updater import StatusUpdater
 from ..rss_fetcher import RSSFetcher
+from ..telegraph_publisher import TelegraphPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,7 @@ class DigestBot:
             "/setup — Configure your interest profile\n"
             "/threshold [value] — View/set filter drop_below threshold\n"
             "/language — Choose digest language\n"
+            "/format — Choose output format (file / Telegraph Instant View)\n"
             "/provider — Switch LLM provider\n"
             "/estimate — Estimate generation cost\n"
             "/status — Pipeline status\n"
@@ -227,19 +229,12 @@ class DigestBot:
         try:
             result = await self.orchestrator.run(week_id, status_updater)
             if result:
-                try:
-                    with open(result, "rb") as f:
-                        await context.bot.send_document(
-                            chat_id=update.effective_chat.id,
-                            document=f,
-                            filename=f"digest-{week_id}.md",
-                            caption=f"📖 Your weekly digest is ready!",
-                        )
-                except Exception as e:
-                    logger.error("Failed to send document: %s", e)
-                    await update.message.reply_text(
-                        f"✅ Digest generated and saved to: {result}"
-                    )
+                await self._send_digest_result(
+                    chat_id=update.effective_chat.id,
+                    week_id=week_id,
+                    file_path=result,
+                    bot=context.bot,
+                )
         except Exception as e:
             await update.message.reply_text(f"❌ Generation failed: {e}")
         finally:
@@ -595,6 +590,114 @@ class DigestBot:
 
         await update.message.reply_text("\n".join(lines))
 
+    # ── Output Format Selection ──
+
+    FORMAT_LABELS = {
+        "file": "📎 File (.md)",
+        "telegraph": "📖 Telegraph (Instant View)",
+        "both": "📎+📖 Both",
+    }
+
+    async def _send_digest_result(
+        self,
+        chat_id: int,
+        week_id: str,
+        file_path: str,
+        bot,
+    ) -> None:
+        """Deliver the digest according to the user's output_format preference."""
+        output_format = await self.db.get_setting("output_format", "file")
+        send_file = output_format in ("file", "both")
+        send_telegraph = output_format in ("telegraph", "both")
+
+        if send_telegraph:
+            try:
+                publisher = TelegraphPublisher()
+                await publisher.ensure_account(self.db)
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                url = await publisher.publish(content)
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"📖 Your weekly digest is ready!\n\n{url}",
+                )
+            except Exception as e:
+                logger.error("Telegraph publishing failed: %s", e)
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⚠️ Telegraph publishing failed, sending file instead.\nError: {e}",
+                )
+                send_file = True  # fallback to file
+
+        if send_file:
+            try:
+                with open(file_path, "rb") as f:
+                    await bot.send_document(
+                        chat_id=chat_id,
+                        document=f,
+                        filename=f"digest-{week_id}.md",
+                        caption="📖 Your weekly digest is ready!",
+                    )
+            except Exception as e:
+                logger.error("Failed to send document: %s", e)
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"✅ Digest generated and saved to: {file_path}",
+                )
+
+    async def _handle_format(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        current = await self.db.get_setting("output_format", "file")
+        current_label = self.FORMAT_LABELS.get(current, current)
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📎 File", callback_data="format:file"),
+                InlineKeyboardButton("📖 Telegraph", callback_data="format:telegraph"),
+                InlineKeyboardButton("📎+📖 Both", callback_data="format:both"),
+            ]
+        ])
+
+        await update.message.reply_text(
+            f"📤 Digest output format: {current_label}\n\n"
+            "• *File* — send the .md file as attachment (default)\n"
+            "• *Telegraph* — publish to telegra.ph and send the Instant View link\n"
+            "• *Both* — send both file and Telegraph link\n\n"
+            "Choose format:",
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+
+    async def _handle_format_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        query = update.callback_query
+        if not query or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await query.answer("Access denied.")
+            return
+
+        if not query.data or not query.data.startswith("format:"):
+            return
+
+        fmt = query.data.split(":", 1)[1]
+        if fmt not in self.FORMAT_LABELS:
+            await query.answer("Unknown format.")
+            return
+
+        await self.db.set_setting("output_format", fmt)
+        label = self.FORMAT_LABELS[fmt]
+        await query.answer(f"Format set to {label}")
+        await query.edit_message_text(f"✅ Output format set to {label}")
+
     # ── Provider Selection ──
 
     PROVIDER_LABELS = {
@@ -900,19 +1003,12 @@ class DigestBot:
         try:
             result = await self.orchestrator.run(week_id, status_updater)
             if result:
-                try:
-                    with open(result, "rb") as f:
-                        await context.bot.send_document(
-                            chat_id=update.effective_chat.id,
-                            document=f,
-                            filename=f"digest-{week_id}.md",
-                            caption="📖 Your weekly digest is ready!",
-                        )
-                except Exception as e:
-                    logger.error("Failed to send document: %s", e)
-                    await update.message.reply_text(
-                        f"✅ Digest generated and saved to: {result}"
-                    )
+                await self._send_digest_result(
+                    chat_id=update.effective_chat.id,
+                    week_id=week_id,
+                    file_path=result,
+                    bot=context.bot,
+                )
         except Exception as e:
             await update.message.reply_text(f"❌ Generation failed: {e}")
         finally:
@@ -1327,6 +1423,7 @@ class DigestBot:
             BotCommand("logs", "Show last pipeline run logs"),
             BotCommand("cost", "Show token usage & cost report"),
             BotCommand("week", "Current week info & stats"),
+            BotCommand("format", "Choose digest output format (file/Telegraph)"),
             BotCommand("rss", "Manage RSS feed subscriptions"),
         ])
 
@@ -1387,6 +1484,10 @@ class DigestBot:
         self.app.add_handler(CommandHandler("lang", self._handle_language))
         self.app.add_handler(
             CallbackQueryHandler(self._handle_language_callback, pattern=r"^lang:")
+        )
+        self.app.add_handler(CommandHandler("format", self._handle_format))
+        self.app.add_handler(
+            CallbackQueryHandler(self._handle_format_callback, pattern=r"^format:")
         )
         self.app.add_handler(CommandHandler("rss", self._handle_rss))
         # Also keep /digest as an alias for /generate
