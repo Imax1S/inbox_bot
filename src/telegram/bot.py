@@ -83,14 +83,17 @@ class DigestBot:
         collector: CollectorAgent,
         orchestrator: Orchestrator,
         profiler: ProfilerAgent | None = None,
+        dry_run_orchestrator: Orchestrator | None = None,
     ):
         self.config = config
         self.db = db
         self.collector = collector
         self.orchestrator = orchestrator
         self.profiler = profiler
+        self.dry_run_orchestrator = dry_run_orchestrator
         self.app: Application | None = None
         self._generating = False
+        self._dry_running = False
 
     def _is_authorized(self, user_id: int) -> bool:
         return user_id in self.config.telegram.user_ids
@@ -244,6 +247,61 @@ class DigestBot:
             await update.message.reply_text(f"❌ Generation failed: {e}")
         finally:
             self._generating = False
+
+    async def _handle_dryrun(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Run the full pipeline with a mock LLM — no API calls, no token spend."""
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        if not self.dry_run_orchestrator:
+            await update.message.reply_text("❌ Dry-run orchestrator not configured.")
+            return
+
+        if self._generating or self._dry_running:
+            await update.message.reply_text("⏳ Generation already in progress.")
+            return
+
+        week_id = Database.current_week_id()
+        items = await self.db.get_items_by_week(week_id, status=ItemStatus.COLLECTED)
+
+        if not items:
+            await update.message.reply_text(
+                f"No collected items for {week_id}. Send some content first!"
+            )
+            return
+
+        self._dry_running = True
+        await update.message.reply_text(
+            f"🧪 *Dry run* — running pipeline on {len(items)} items with mock LLM (no API calls)…",
+            parse_mode="Markdown",
+        )
+        status_updater = StatusUpdater(context.bot, update.effective_chat.id)
+
+        try:
+            result = await self.dry_run_orchestrator.run(week_id, status_updater)
+            if result:
+                try:
+                    with open(result, "rb") as f:
+                        await context.bot.send_document(
+                            chat_id=update.effective_chat.id,
+                            document=f,
+                            filename=f"dryrun-{week_id}.md",
+                            caption="🧪 Dry-run digest (mock LLM — structure only, no real content)",
+                        )
+                except Exception as e:
+                    logger.error("Failed to send dry-run document: %s", e)
+                    await update.message.reply_text(f"✅ Dry-run complete. Saved to: {result}")
+            else:
+                await update.message.reply_text("⚠️ Dry run produced no output (all items filtered?).")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Dry run failed: {e}")
+        finally:
+            self._dry_running = False
 
     async def _handle_items(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1315,6 +1373,7 @@ class DigestBot:
         await application.bot.set_my_commands([
             BotCommand("start", "Show welcome message & help"),
             BotCommand("generate", "Generate weekly digest now"),
+            BotCommand("dryrun", "Test pipeline without spending tokens (mock LLM)"),
             BotCommand("regenerate", "Re-generate digest from existing items"),
             BotCommand("items", "List this week's collected items"),
             BotCommand("delete", "Remove an item by ID"),
@@ -1368,6 +1427,7 @@ class DigestBot:
 
         self.app.add_handler(CommandHandler("start", self._handle_start))
         self.app.add_handler(CommandHandler("generate", self._handle_generate))
+        self.app.add_handler(CommandHandler("dryrun", self._handle_dryrun))
         self.app.add_handler(CommandHandler("regenerate", self._handle_regenerate))
         self.app.add_handler(CommandHandler("threshold", self._handle_threshold))
         self.app.add_handler(CommandHandler("items", self._handle_items))

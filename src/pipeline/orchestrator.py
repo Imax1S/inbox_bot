@@ -211,6 +211,47 @@ class Orchestrator:
                     run_id=run_id,
                 )
 
+            # Resolve drop_below once for both file section and Telegram report
+            drop_below = 0.25
+            if self.filter_agent:
+                drop_below = (
+                    self.filter_agent.user_profile
+                    .get("scoring_hints_for_python", {})
+                    .get("thresholds", {})
+                    .get("drop_below", 0.25)
+                )
+
+            # ── Append filtered-items section (if any) ──
+            if filter_report:
+                type_icon = {
+                    "irrelevant": "🚫",
+                    "duplicate": "🔄",
+                    "noise": "🗑",
+                    "shallow": "📉",
+                }
+                rows = []
+                for entry in filter_report:
+                    score = entry.get("score", 0.0)
+                    gap = drop_below - score
+                    gap_str = f"−{gap:.2f}" if gap > 0 else f"+{abs(gap):.2f}"
+                    icon = type_icon.get(entry["type"], "❌")
+                    rows.append(
+                        f"| {entry['summary']} "
+                        f"| {score:.2f} "
+                        f"| {gap_str} "
+                        f"| {icon} {entry['type']} "
+                        f"| {entry['reason']} |"
+                    )
+                filtered_section = (
+                    "\n\n---\n\n"
+                    f"## 🚫 Отфильтровано ({len(filter_report)})\n\n"
+                    f"*drop\\_below = {drop_below:.2f}*\n\n"
+                    "| Материал | Скор | До порога | Тип | Причина |\n"
+                    "|---|---|---|---|---|\n"
+                    + "\n".join(rows)
+                )
+                magazine += filtered_section
+
             # ── Save & Finalize ──
             file_path = self.obsidian_writer.save_digest(magazine)
 
@@ -242,14 +283,6 @@ class Orchestrator:
 
             # Send filter report if items were filtered
             if filter_report and status_updater:
-                # Get drop_below threshold from filter agent profile
-                drop_below = 0.25  # default moderate
-                if self.filter_agent:
-                    thresholds = self.filter_agent.user_profile.get(
-                        "scoring_hints_for_python", {}
-                    ).get("thresholds", {})
-                    drop_below = thresholds.get("drop_below", 0.25)
-
                 report_lines = [
                     f"🗑 Filtered {len(filter_report)} item(s) "
                     f"(drop_below={drop_below:.2f}):\n"
