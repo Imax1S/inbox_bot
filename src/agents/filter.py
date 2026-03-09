@@ -171,11 +171,20 @@ class FilterAgent(BaseAgent):
 
     def _build_user_message(self, items: list[Item]) -> str:
         strictness = self.user_profile.get("filtering_strictness", "moderate")
+        drop_below = (
+            self.user_profile
+            .get("scoring_hints_for_python", {})
+            .get("thresholds", {})
+            .get("drop_below", None)
+        )
 
         lines = [
             f"Filtering strictness: {strictness}",
-            f"\nItems to evaluate ({len(items)} total):\n",
         ]
+        if drop_below is not None:
+            lines.append(f"Drop-below threshold override: {drop_below:.2f} — filter ONLY items with relevance_score strictly below this value; keep everything at or above it regardless of strictness preset.")
+        lines.append(f"\nItems to evaluate ({len(items)} total):\n")
+
         for item in items:
             lines.append(
                 f"- ID: {item.id}\n"
