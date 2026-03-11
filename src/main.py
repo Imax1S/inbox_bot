@@ -130,6 +130,19 @@ def main() -> None:
         filter_agent=filter_agent,
     )
 
+    # Create dry-run orchestrator (does not mark items as PUBLISHED)
+    dry_run_orchestrator = Orchestrator(
+        db=db,
+        clusterer=clusterer,
+        researcher=researcher,
+        writer=writer,
+        editor=editor,
+        translator=translator,
+        obsidian_writer=obsidian,
+        filter_agent=filter_agent,
+        dry_run=True,
+    )
+
     # Create bot
     bot = DigestBot(
         config=config,
