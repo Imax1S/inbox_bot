@@ -6,7 +6,7 @@ You save links, jot down ideas, and forward articles all week — then forget ab
 **Inbox Agent Bot** is a personal AI that lives in Telegram and turns that noise into signal.
 
 Send it anything throughout the week: articles, URLs, random thoughts, topics you're curious about.
-It learns your interests, filters out the noise, and every Sunday delivers a **polished weekly digest** — grouped by theme, written like a magazine, saved straight to your Obsidian vault.
+You configure your interests via `/setup`, it filters out the noise, and every Sunday automatically delivers a **polished weekly digest** — grouped by theme, written like a magazine, saved straight to your Obsidian vault. You can also trigger it on demand with `/generate`.
 
 **The idea:** a *thought mapper* that knows what you care about, cuts through the clutter, and hands you a curated weekly read instead of an ever-growing backlog.
 
@@ -55,10 +55,14 @@ python -m src.main
 |---------|-------------|
 | `/start` | Introduction |
 | `/generate` | Run the digest pipeline now (alias: `/digest`) |
+| `/dryrun` | Run the full pipeline with a mock LLM — no API calls, no token spend |
+| `/regenerate` | Regenerate the digest for the current week |
 | `/items` | List collected items |
 | `/delete` | Remove an item |
 | `/setup` | Configure your interest profile (multi-step wizard) |
 | `/language` | Choose digest language — RU/EN (alias: `/lang`) |
+| `/threshold` | Adjust the filter score threshold for dropping items |
+| `/rss` | Manage RSS feed subscriptions (`add <url>`, `list`, `remove <n>`) |
 | `/status` | Pipeline status |
 | `/logs` | Agent step logs |
 | `/cost` | Token usage and cost |
@@ -94,10 +98,11 @@ src/
 ├── db/                  # Async SQLite (items, pipeline_runs, step_logs, settings)
 ├── llm/                 # LLMProvider protocol (Anthropic, OpenAI) with structured output
 ├── pipeline/            # Orchestrator, scheduler, status updates
+├── rss_fetcher.py       # Periodic RSS feed polling and ingestion
 └── telegram/            # Bot commands & handlers
 
 prompts/                 # One .txt file per agent (edit these to change behavior)
-tests/                   # pytest suite — MockLLMProvider, 17 tests across agents & provider
+tests/                   # pytest suite — MockLLMProvider, 34 tests across agents, provider, config, RSS
 user_profile.json        # Your interests, language, style preferences
 ```
 
