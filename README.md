@@ -6,7 +6,7 @@ You save links, jot down ideas, and forward articles all week — then forget ab
 **Inbox Agent Bot** is a personal AI that lives in Telegram and turns that noise into signal.
 
 Send it anything throughout the week: articles, URLs, random thoughts, topics you're curious about.
-It learns your interests, filters out the noise, and every Sunday delivers a **polished weekly digest** — grouped by theme, written like a magazine, saved straight to your Obsidian vault.
+You configure your interests via `/setup`, it filters out the noise, and every Sunday automatically delivers a **polished weekly digest** — grouped by theme, written like a magazine, saved straight to your Obsidian vault. You can also trigger it on demand with `/generate`.
 
 **The idea:** a *thought mapper* that knows what you care about, cuts through the clutter, and hands you a curated weekly read instead of an ever-growing backlog.
 
