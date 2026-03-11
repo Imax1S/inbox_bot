@@ -90,7 +90,7 @@ class ClustererAgent(BaseAgent):
                 tool_description="Group items into coherent topic clusters for the weekly digest",
                 output_schema=self.OUTPUT_SCHEMA,
                 run_id=run_id,
-                max_tokens=2048,
+                max_tokens=8192,
                 temperature=0.3,
             )
             result = ClusterResult.from_json(data)

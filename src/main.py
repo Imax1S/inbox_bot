@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import sys
+import tempfile
+from pathlib import Path
 
 from .agents.clusterer import ClustererAgent
 from .agents.collector import CollectorAgent
@@ -12,8 +14,9 @@ from .agents.profiler import ProfilerAgent
 from .agents.researcher import ResearcherAgent
 from .agents.translator import TranslatorAgent
 from .agents.writer import WriterAgent
-from .config import get_provider_defaults, get_user_profile, load_config
+from .config import ObsidianConfig, get_provider_defaults, get_user_profile, load_config
 from .db.database import Database
+from .llm.dry_run import DryRunLLMProvider
 from .llm.provider import create_provider
 from .obsidian_writer import ObsidianWriter
 from .pipeline.orchestrator import Orchestrator
@@ -130,6 +133,22 @@ def main() -> None:
         filter_agent=filter_agent,
     )
 
+    # Create dry-run orchestrator (uses mock LLM, saves to temp dir)
+    dry_run_llm = DryRunLLMProvider()
+    dry_run_dir = Path(tempfile.gettempdir()) / "inbox_bot_dryrun"
+    dry_run_obsidian = ObsidianWriter(ObsidianConfig(vault_path=dry_run_dir))
+    dry_run_orchestrator = Orchestrator(
+        db=db,
+        clusterer=ClustererAgent(dry_run_llm, config.llm.clusterer_model, db, user_profile),
+        researcher=ResearcherAgent(dry_run_llm, config.llm.researcher_model, db, user_profile),
+        writer=WriterAgent(dry_run_llm, config.llm.writer_model, db, user_profile),
+        editor=EditorAgent(dry_run_llm, config.llm.editor_model, db, user_profile),
+        translator=TranslatorAgent(dry_run_llm, config.llm.translator_model, db, user_profile),
+        obsidian_writer=dry_run_obsidian,
+        filter_agent=FilterAgent(dry_run_llm, config.llm.filter_model, db, user_profile),
+        dry_run=True,
+    )
+
     # Create bot
     bot = DigestBot(
         config=config,
@@ -137,6 +156,7 @@ def main() -> None:
         collector=collector,
         orchestrator=orchestrator,
         profiler=profiler,
+        dry_run_orchestrator=dry_run_orchestrator,
     )
 
     # Build the application
