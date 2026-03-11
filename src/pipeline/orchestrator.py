@@ -35,6 +35,7 @@ class Orchestrator:
         translator: TranslatorAgent,
         obsidian_writer: ObsidianWriter,
         filter_agent: FilterAgent | None = None,
+        dry_run: bool = False,
     ):
         self.db = db
         self.clusterer = clusterer
@@ -44,6 +45,7 @@ class Orchestrator:
         self.translator = translator
         self.obsidian_writer = obsidian_writer
         self.filter_agent = filter_agent
+        self.dry_run = dry_run
 
     async def run(
         self,
@@ -255,9 +257,10 @@ class Orchestrator:
             # ── Save & Finalize ──
             file_path = self.obsidian_writer.save_digest(magazine)
 
-            await self.db.update_items_status(
-                [item.id for item in items], ItemStatus.PUBLISHED
-            )
+            if not self.dry_run:
+                await self.db.update_items_status(
+                    [item.id for item in items], ItemStatus.PUBLISHED
+                )
 
             # Aggregate token usage from step logs
             last_run = await self.db.get_last_run(week_id)

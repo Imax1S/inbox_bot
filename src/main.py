@@ -146,6 +146,7 @@ def main() -> None:
         translator=TranslatorAgent(dry_run_llm, config.llm.translator_model, db, user_profile),
         obsidian_writer=dry_run_obsidian,
         filter_agent=FilterAgent(dry_run_llm, config.llm.filter_model, db, user_profile),
+        dry_run=True,
     )
 
     # Create bot
