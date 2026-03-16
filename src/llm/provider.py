@@ -127,7 +127,7 @@ class AnthropicProvider:
             max_tokens=max_tokens,
             temperature=temperature,
             system=system_prompt,
-            tools=[{"type": "web_search", "name": "web_search"}],
+            tools=[{"type": "web_search_20260209", "name": "web_search"}],
             messages=[{"role": "user", "content": user_message}],
         )
         # Response may contain tool_use + tool_result blocks alongside text blocks
