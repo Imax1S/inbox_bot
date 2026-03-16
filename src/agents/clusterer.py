@@ -56,7 +56,7 @@ class ClustererAgent(BaseAgent):
             "quick_bites_item_ids": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "IDs of trivial items too short for a full cluster",
+                "description": "IDs of items that don't warrant a full article: short articles, tweet threads, single medium-length articles with moderate relevance, or items without enough substance for 300+ words",
             },
         },
         "required": ["clusters", "quick_bites_item_ids"],

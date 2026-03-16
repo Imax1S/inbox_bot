@@ -70,8 +70,8 @@ class WriterAgent(BaseAgent):
             if item.source_url:
                 parts.append(f"URL: {item.source_url}")
             content = item.extracted_text or item.raw_content
-            if len(content) > 5000:
-                content = content[:5000] + "\n[...truncated]"
+            if len(content) > 8000:
+                content = content[:8000] + "\n[...truncated]"
             parts.append(f"Content:\n{content}\n")
 
         parts.append(f"\n## Research Brief:\n{research_brief}")

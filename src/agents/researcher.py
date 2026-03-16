@@ -1,7 +1,9 @@
-"""Researcher agent — produces research briefs to fill gaps in source material."""
+"""Researcher agent — produces research briefs via web search."""
 
 import json
 import logging
+from datetime import datetime
+from uuid import uuid4
 
 from ..db.database import Database
 from ..db.models import Cluster, Item
@@ -34,17 +36,43 @@ class ResearcherAgent(BaseAgent):
         items: list[Item],
         run_id: str | None = None,
     ) -> str:
-        """Produce a research brief for a cluster."""
+        """Produce a research brief via web search."""
         user_message = self._build_user_message(cluster, items)
 
-        response = await self._call_llm(
-            user_message=user_message,
-            run_id=run_id,
-            max_tokens=2048,
-            temperature=0.7,
-        )
+        step_id = str(uuid4())
+        started_at = datetime.now()
 
-        return response.content
+        try:
+            response = await self.llm.generate_with_search(
+                model=self.model,
+                system_prompt=self._prompt_template,
+                user_message=user_message,
+                max_tokens=2048,
+                temperature=0.5,
+            )
+
+            if run_id:
+                await self._log_step(
+                    step_id=step_id,
+                    run_id=run_id,
+                    started_at=started_at,
+                    response=response,
+                    status="completed",
+                )
+
+            return response.content
+
+        except Exception as e:
+            if run_id:
+                await self._log_step(
+                    step_id=step_id,
+                    run_id=run_id,
+                    started_at=started_at,
+                    response=None,
+                    status="failed",
+                    error=str(e),
+                )
+            raise
 
     def _build_user_message(self, cluster: Cluster, items: list[Item]) -> str:
         parts = [

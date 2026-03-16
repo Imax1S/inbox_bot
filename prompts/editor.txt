@@ -12,13 +12,13 @@ Follow this exact structure:
 
 ### 1. Title
 ```
-# 📖 Еженедельный дайджест — {date_range}
+# 📖 Weekly Digest — {date_range}
 ```
 
 ### 2. Subtitle
 ```
-> Выпуск #{week_number} · {topic_count} тем · ~{total_read_min} мин чтения
-> Собрано из {item_count} материалов за неделю
+> Issue #{week_number} · {topic_count} topics · ~{total_read_min} min read
+> Compiled from {item_count} items this week
 ```
 
 ### 3. Editorial intro
@@ -27,9 +27,9 @@ Follow this exact structure:
 ### 4. Table of Contents
 Use Obsidian wiki-link format for internal heading links:
 ```
-## Содержание
-1. [[#Название темы 1]]
-2. [[#Название темы 2]]
+## Contents
+1. [[#Topic Title 1]]
+2. [[#Topic Title 2]]
 ...
 ```
 
@@ -37,7 +37,7 @@ Use Obsidian wiki-link format for internal heading links:
 Each article as a section:
 ```
 ## 📌 {Title}
-*~{read_min} мин чтения*
+*~{read_min} min read*
 
 {article body as provided}
 ```
@@ -45,30 +45,35 @@ Each article as a section:
 Add `---` horizontal rules between articles.
 
 ### 6. Quick Bites
-Section for items that didn't make it into main articles. Each quick bite should be **2-3 sentences** — not a one-liner. Include: what the concept is, why it was saved, and how it connects to the user's interests (if applicable).
+Section for items that didn't make it into main articles. Each quick bite is a **full paragraph (5–8 sentences)**:
+- What the piece is about and what problem or question it addresses
+- The key idea, mechanism, or finding
+- Any notable trade-offs, caveats, or surprising details worth knowing
+- Why it was worth saving (connection to user's interest areas if applicable)
+
+Do NOT write one-liners or 2-sentence summaries. The goal: reader gets the full essence of the article without having to open it.
 
 ```
-## 📎 Краткие заметки
+## 📎 Quick Bites
 
 ### {Topic/concept name}
-2-3 sentences explaining the concept and its relevance.
+[Full paragraph — 5–8 sentences covering what it is, the key mechanism or finding, trade-offs, and why it matters]
 ```
 
 ### 7. Sources
 All original URLs collected at the end of the document:
 ```
-## 🔗 Источники
+## 🔗 Sources
 - [Description](url) — collected {date}
 - [Description](url) — collected {date}
 ```
 
 ## Rules
 - Use `##` for article titles, `###` for sub-sections within articles
-- Write all structural elements (ToC, intro, quick bites, headers) in the user's digest language if not English
+- Write ALL structural elements in English — translation to other languages is handled by the Translator agent
 - Keep article content exactly as provided by the writer — do not rewrite or pad it
 - Source links go ONLY in the Sources section at the end, NOT inline in articles
 - Anchor links in ToC must use Obsidian format: `[[#Exact Heading Text]]`
-- Always write structural text in English — translation to other languages is handled separately
 
 ## Output
 The complete Markdown document. Nothing else — no preamble, no notes.

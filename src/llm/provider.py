@@ -1,8 +1,11 @@
 """LLM provider abstraction with token tracking for Anthropic and OpenAI."""
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,6 +36,15 @@ class LLMProvider(Protocol):
         tool_description: str,
         output_schema: dict,
         max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> LLMResponse: ...
+
+    async def generate_with_search(
+        self,
+        model: str,
+        system_prompt: str,
+        user_message: str,
+        max_tokens: int = 1024,
         temperature: float = 0.7,
     ) -> LLMResponse: ...
 
@@ -100,6 +112,33 @@ class AnthropicProvider:
             output_tokens=response.usage.output_tokens,
             model=model,
             structured_output=structured,
+        )
+
+    async def generate_with_search(
+        self,
+        model: str,
+        system_prompt: str,
+        user_message: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> LLMResponse:
+        response = await self.client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system_prompt,
+            tools=[{"type": "web_search", "name": "web_search"}],
+            messages=[{"role": "user", "content": user_message}],
+        )
+        # Response may contain tool_use + tool_result blocks alongside text blocks
+        content = "\n".join(
+            block.text for block in response.content if hasattr(block, "text")
+        )
+        return LLMResponse(
+            content=content,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            model=model,
         )
 
 
@@ -176,6 +215,19 @@ class OpenAIProvider:
             model=model,
             structured_output=structured,
         )
+
+    async def generate_with_search(
+        self,
+        model: str,
+        system_prompt: str,
+        user_message: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> LLMResponse:
+        logger.warning(
+            "OpenAI provider does not support web_search tool — falling back to generate()"
+        )
+        return await self.generate(model, system_prompt, user_message, max_tokens, temperature)
 
 
 def create_provider(provider_name: str, api_key: str) -> LLMProvider:
