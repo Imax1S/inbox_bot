@@ -61,7 +61,7 @@ def get_provider_defaults(provider: str) -> tuple[str, str]:
     if provider == "openai":
         return ("gpt-4.1-mini", "gpt-4.1")
     else:  # anthropic
-        return ("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-20250929")
+        return ("claude-sonnet-4-6", "claude-sonnet-4-6")
 
 
 def _parse_telegram_user_ids() -> list[int]:

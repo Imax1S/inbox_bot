@@ -46,7 +46,7 @@ class EditorAgent(BaseAgent):
         response = await self._call_llm(
             user_message=user_message,
             run_id=run_id,
-            max_tokens=16384,
+            max_tokens=32768,
             temperature=0.5,
         )
 

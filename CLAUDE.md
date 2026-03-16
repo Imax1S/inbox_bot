@@ -171,7 +171,7 @@ All config is loaded via `src/config.py` from environment variables (`.env` file
 
 ### Default Models
 
-- **Anthropic:** `claude-sonnet-4-5-20250929` for all agents
+- **Anthropic:** `claude-sonnet-4-6` for all agents (64K output tokens; required for large digests)
 - **OpenAI:** `gpt-4.1-mini` (fast), `gpt-4.1` (quality)
 
 ## Key Conventions
