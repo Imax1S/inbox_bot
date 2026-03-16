@@ -322,6 +322,14 @@ class Orchestrator:
 
         except Exception as e:
             logger.exception("Pipeline failed for %s: %s", week_id, e)
+            # Aggregate tokens from any steps that completed before the failure
+            try:
+                partial_run = await self.db.get_last_run(week_id)
+                if partial_run and partial_run.id == run_id and partial_run.steps:
+                    total_input = sum(s.input_tokens for s in partial_run.steps)
+                    total_output = sum(s.output_tokens for s in partial_run.steps)
+            except Exception:
+                pass  # Don't mask the original error
             await self.db.update_pipeline_run(
                 run_id,
                 PipelineStatus.FAILED,

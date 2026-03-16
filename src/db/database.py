@@ -445,6 +445,21 @@ class Database:
                 row = await cursor.fetchone()
                 return row is not None
 
+    async def reset_running_runs(self) -> int:
+        """Reset stale RUNNING pipeline runs to FAILED.
+
+        Should be called on startup to clean up after crashes or hard kills.
+        Returns the number of runs that were reset.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "UPDATE pipeline_runs SET status = 'FAILED', finished_at = ?"
+                " WHERE status = 'RUNNING'",
+                (_dt_to_str(datetime.now()),),
+            )
+            await db.commit()
+            return cursor.rowcount
+
     # ── Utilities ──
 
     @staticmethod

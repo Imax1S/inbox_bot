@@ -98,6 +98,18 @@ class DigestBot:
     def _is_authorized(self, user_id: int) -> bool:
         return user_id in self.config.telegram.user_ids
 
+    @staticmethod
+    def _format_generation_error(e: Exception) -> str:
+        """Return a user-friendly error message for generation failures."""
+        msg = str(e)
+        if "credit balance is too low" in msg or "Your credit balance" in msg:
+            return (
+                "❌ Generation failed: API balance is too low.\n\n"
+                "Top up your balance at https://console.anthropic.com/settings/billing "
+                "and run /generate to retry."
+            )
+        return f"❌ Generation failed: {e}"
+
     # ── Message Handler ──
 
     async def _handle_message(
@@ -244,7 +256,7 @@ class DigestBot:
                         f"✅ Digest generated and saved to: {result}"
                     )
         except Exception as e:
-            await update.message.reply_text(f"❌ Generation failed: {e}")
+            await update.message.reply_text(self._format_generation_error(e))
         finally:
             self._generating = False
 
@@ -972,7 +984,7 @@ class DigestBot:
                         f"✅ Digest generated and saved to: {result}"
                     )
         except Exception as e:
-            await update.message.reply_text(f"❌ Generation failed: {e}")
+            await update.message.reply_text(self._format_generation_error(e))
         finally:
             self._generating = False
 
