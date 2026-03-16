@@ -39,6 +39,11 @@ async def init_db_and_settings(db: Database, config, file_profile: dict) -> tupl
     """
     await db.init()
 
+    # Clean up any stale RUNNING runs left over from a previous crash
+    stale = await db.reset_running_runs()
+    if stale:
+        logger.warning("Reset %d stale RUNNING pipeline run(s) to FAILED on startup", stale)
+
     # Resolve provider from saved settings
     saved_provider = await db.get_setting("llm_provider")
     if saved_provider and saved_provider != config.llm.provider:
