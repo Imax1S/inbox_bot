@@ -135,7 +135,7 @@ class AnthropicProvider:
             response = await stream.get_final_message()
         # Response may contain tool_use + tool_result blocks alongside text blocks
         content = "\n".join(
-            block.text for block in response.content if hasattr(block, "text")
+            block.text for block in response.content if hasattr(block, "text") and block.text is not None
         )
         return LLMResponse(
             content=content,
