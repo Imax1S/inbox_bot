@@ -63,13 +63,14 @@ class AnthropicProvider:
         max_tokens: int = 4096,
         temperature: float = 0.7,
     ) -> LLMResponse:
-        response = await self.client.messages.create(
+        async with self.client.messages.stream(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}],
-        )
+        ) as stream:
+            response = await stream.get_final_message()
         return LLMResponse(
             content=response.content[0].text,
             input_tokens=response.usage.input_tokens,
@@ -88,7 +89,7 @@ class AnthropicProvider:
         max_tokens: int = 4096,
         temperature: float = 0.7,
     ) -> LLMResponse:
-        response = await self.client.messages.create(
+        async with self.client.messages.stream(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
@@ -100,7 +101,8 @@ class AnthropicProvider:
                 "input_schema": output_schema,
             }],
             tool_choice={"type": "tool", "name": tool_name},
-        )
+        ) as stream:
+            response = await stream.get_final_message()
         structured = None
         for block in response.content:
             if block.type == "tool_use":
@@ -122,14 +124,15 @@ class AnthropicProvider:
         max_tokens: int = 1024,
         temperature: float = 0.7,
     ) -> LLMResponse:
-        response = await self.client.messages.create(
+        async with self.client.messages.stream(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
             system=system_prompt,
             tools=[{"type": "web_search_20260209", "name": "web_search"}],
             messages=[{"role": "user", "content": user_message}],
-        )
+        ) as stream:
+            response = await stream.get_final_message()
         # Response may contain tool_use + tool_result blocks alongside text blocks
         content = "\n".join(
             block.text for block in response.content if hasattr(block, "text")
