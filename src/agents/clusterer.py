@@ -79,9 +79,10 @@ class ClustererAgent(BaseAgent):
         self,
         items: list[Item],
         run_id: str | None = None,
+        target_read_minutes: int | None = None,
     ) -> ClusterResult:
         """Group items into clusters."""
-        user_message = self._build_user_message(items)
+        user_message = self._build_user_message(items, target_read_minutes)
 
         try:
             data = await self._call_llm_structured(
@@ -123,8 +124,22 @@ class ClustererAgent(BaseAgent):
                 quick_bites_item_ids=[],
             )
 
-    def _build_user_message(self, items: list[Item]) -> str:
+    def _build_user_message(
+        self,
+        items: list[Item],
+        target_read_minutes: int | None = None,
+    ) -> str:
         lines = [f"Items to cluster ({len(items)} total):\n"]
+
+        if target_read_minutes:
+            budget_for_clusters = max(target_read_minutes - 3, 10)
+            lines.append(
+                f"Total read time budget: {target_read_minutes} minutes.\n"
+                f"Distribute across clusters so the sum of estimated_read_minutes "
+                f"does not exceed {budget_for_clusters} (reserve ~3 min for quick bites + intro).\n"
+                f"If items overflow the budget, route lower-priority items to quick_bites.\n"
+            )
+
         for item in items:
             lines.append(
                 f"- ID: {item.id}\n"

@@ -37,10 +37,12 @@ class EditorAgent(BaseAgent):
         all_items: list[Item],
         week_id: str,
         run_id: str | None = None,
+        target_read_minutes: int | None = None,
     ) -> str:
         """Assemble the final magazine from all articles."""
         user_message = self._build_user_message(
-            articles, cluster_result, quick_bites_items, all_items, week_id
+            articles, cluster_result, quick_bites_items, all_items, week_id,
+            target_read_minutes,
         )
 
         response = await self._call_llm(
@@ -59,6 +61,7 @@ class EditorAgent(BaseAgent):
         quick_bites_items: list[Item],
         all_items: list[Item],
         week_id: str,
+        target_read_minutes: int | None = None,
     ) -> str:
         # Calculate date range from items
         if all_items:
@@ -84,8 +87,10 @@ class EditorAgent(BaseAgent):
             f"Total items: {len(all_items)}",
             f"Topic count: {len(cluster_result.clusters)}",
             f"Total estimated read time: {total_read_min} minutes",
-            "",
         ]
+        if target_read_minutes:
+            parts.append(f"Target read time budget: {target_read_minutes} minutes")
+        parts.append("")
 
         # Articles ordered by priority
         sorted_clusters = sorted(

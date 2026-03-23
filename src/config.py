@@ -47,11 +47,19 @@ class ScheduleConfig:
 
 
 @dataclass
+class DigestConfig:
+    target_read_minutes: int = 25
+    min_read_minutes: int = 20
+    max_read_minutes: int = 30
+
+
+@dataclass
 class Config:
     telegram: TelegramConfig
     llm: LLMConfig
     obsidian: ObsidianConfig
     schedule: ScheduleConfig
+    digest: DigestConfig
     user_profile: dict
     db_path: Path
 
@@ -138,6 +146,11 @@ def load_config() -> Config:
             hour=int(os.getenv("SCHEDULE_HOUR", "23")),
             minute=int(os.getenv("SCHEDULE_MINUTE", "0")),
             timezone=os.getenv("SCHEDULE_TIMEZONE", "Europe/Berlin"),
+        ),
+        digest=DigestConfig(
+            target_read_minutes=int(os.getenv("TARGET_READ_MINUTES", "25")),
+            min_read_minutes=int(os.getenv("MIN_READ_MINUTES", "20")),
+            max_read_minutes=int(os.getenv("MAX_READ_MINUTES", "30")),
         ),
         user_profile=user_profile,
         db_path=db_path,

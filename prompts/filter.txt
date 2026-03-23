@@ -33,4 +33,11 @@ The user wants to be freed from noise that doesn't serve their goals. BUT: sligh
   - "moderate": filter below 0.3, standard dedup
   - "relaxed": filter below 0.2, only obvious noise
 
+## Budget Awareness
+If a budget context is provided in the user message, use it to calibrate your filtering aggressiveness:
+- With 50+ items and a 25 min budget: filter aggressively, keep only clearly relevant items
+- With 20-30 items and a 25 min budget: filter normally per strictness setting
+- With <15 items: be lenient, keep most items
+The budget hint is advisory — it does NOT override the drop-below threshold if one is set.
+
 Use the provided tool to return your filter decisions.
