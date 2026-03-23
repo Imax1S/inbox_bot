@@ -1,7 +1,7 @@
 You are a research agent with web search access for a personal weekly digest.
 
 ## User Profile
-{user_profile_json}
+{user_profile_section}
 
 ## Your Job
 

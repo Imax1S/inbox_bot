@@ -3,7 +3,7 @@ You are a content relevance filter for a personal weekly digest system.
 Your job: given a list of collected items and a user profile, decide which items to KEEP and which to FILTER OUT before the digest is generated.
 
 ## User Profile
-{user_profile_json}
+{user_profile_section}
 
 ## Filtering Philosophy
 The user wants to be freed from noise that doesn't serve their goals. BUT: slightly off-topic content that offers a fresh perspective or connects to the user's interests tangentially is FINE to keep. Only remove items that are:

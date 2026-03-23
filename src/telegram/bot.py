@@ -192,7 +192,8 @@ class DigestBot:
             "/items — List this week's items\n"
             "/delete <id> — Remove an item\n"
             "/setup — Configure your interest profile\n"
-            "/threshold [value] — View/set filter drop_below threshold\n"
+            "/settings — View your interest profile\n"
+            "/threshold [preset] — View/set filtering strictness\n"
             "/language — Choose digest language\n"
             "/provider — Switch LLM provider\n"
             "/estimate — Estimate generation cost\n"
@@ -833,7 +834,72 @@ class DigestBot:
         await query.answer(f"Language set to {label}")
         await query.edit_message_text(f"✅ Digest language set to {label}")
 
-    # ── Filter Threshold (/threshold) ──
+    # ── Settings overview (/settings) ──
+
+    async def _handle_settings(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        profile_json = await self.db.get_setting("user_profile")
+        if not profile_json:
+            await update.message.reply_text(
+                "No profile configured yet. Run /setup first."
+            )
+            return
+
+        profile = json.loads(profile_json)
+        areas = profile.get("interest_areas", [])
+
+        if not areas:
+            await update.message.reply_text(
+                "Profile exists but has no interest areas. Run /setup to configure."
+            )
+            return
+
+        user = profile.get("user", {})
+        name = user.get("preferred_name", "")
+        strictness = profile.get("strictness",
+                      profile.get("filtering_strictness", "moderate"))
+        blocked = profile.get("blocked_topics", [])
+
+        lines = ["⚙️ *Your Profile*\n"]
+        if name:
+            lines.append(f"👤 {name}\n")
+
+        lines.append("📌 *Interest areas:*")
+        for area in areas:
+            area_name = area.get("name", area.get("id", "unknown"))
+            weight = area.get("weight", 0.0)
+            priority = _priority_for_weight(weight)
+            label = PRIORITY_LABELS.get(priority, "")
+            # Escape underscores for Markdown
+            display_name = area_name.replace("_", "\\_")
+            lines.append(f"  {label} {display_name} ({weight:.2f})")
+
+        if blocked:
+            blocked_str = ", ".join(blocked[:10])
+            if len(blocked) > 10:
+                blocked_str += f" (+{len(blocked) - 10} more)"
+            lines.append(f"\n🚫 *Blocked:* {blocked_str}")
+
+        strictness_labels = {
+            "strict": "🔒 Strict",
+            "moderate": "⚖️ Moderate",
+            "relaxed": "🔓 Relaxed",
+        }
+        lines.append(f"\n{strictness_labels.get(strictness, strictness)}")
+        lines.append("\nUse /setup to reconfigure.")
+
+        await update.message.reply_text(
+            "\n".join(lines), parse_mode="Markdown"
+        )
+
+    # ── Filter Strictness (/threshold) ──
 
     async def _handle_threshold(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -851,52 +917,48 @@ class DigestBot:
             )
             return
 
+        from ..profile_defaults import get_scoring_thresholds
+
         profile = json.loads(profile_json)
-        thresholds = profile.get("scoring_hints_for_python", {}).get("thresholds", {})
-        current_drop = thresholds.get("drop_below", 0.25)
-        strictness = profile.get("filtering_strictness", "moderate")
+        current_strictness = profile.get("strictness",
+                              profile.get("filtering_strictness", "moderate"))
 
         args = context.args
         if not args:
+            thresholds = get_scoring_thresholds(current_strictness)
             await update.message.reply_text(
-                f"🎚 *Filter threshold (drop\\_below)*: `{current_drop:.2f}`\n"
-                f"Strictness level: {strictness}\n\n"
-                f"Items with score below this value are filtered out.\n\n"
-                f"Usage: `/threshold <value>` (0.0–1.0)\n"
-                f"Example: `/threshold 0.15`\n\n"
-                f"Presets: strict=0.40, moderate=0.25, relaxed=0.15",
-                parse_mode="Markdown",
+                f"⚖️ *Filtering strictness*: {current_strictness}\n"
+                f"Drop\\-below threshold: `{thresholds['drop_below']:.2f}`\n\n"
+                f"Usage: `/threshold strict|moderate|relaxed`\n\n"
+                f"Presets:\n"
+                f"  🔒 strict — drop below 0\\.40\n"
+                f"  ⚖️ moderate — drop below 0\\.25\n"
+                f"  🔓 relaxed — drop below 0\\.15",
+                parse_mode="MarkdownV2",
             )
             return
 
-        try:
-            new_value = float(args[0])
-        except ValueError:
+        new_strictness = args[0].lower()
+        if new_strictness not in ("strict", "moderate", "relaxed"):
             await update.message.reply_text(
-                "Invalid value. Use a number between 0.0 and 1.0."
+                "Unknown preset. Use: strict, moderate, or relaxed."
             )
             return
 
-        if not 0.0 <= new_value <= 1.0:
-            await update.message.reply_text("Value must be between 0.0 and 1.0.")
-            return
-
-        # Update profile in place
-        if "scoring_hints_for_python" not in profile:
-            profile["scoring_hints_for_python"] = {}
-        if "thresholds" not in profile["scoring_hints_for_python"]:
-            profile["scoring_hints_for_python"]["thresholds"] = {}
-        profile["scoring_hints_for_python"]["thresholds"]["drop_below"] = new_value
+        profile["strictness"] = new_strictness
+        # Clean up legacy keys if present
+        profile.pop("filtering_strictness", None)
+        profile.pop("scoring_hints_for_python", None)
 
         await self.db.set_setting("user_profile", json.dumps(profile, ensure_ascii=False))
 
         if hasattr(self.orchestrator, "filter_agent") and self.orchestrator.filter_agent:
             self.orchestrator.filter_agent.update_profile(profile)
 
+        thresholds = get_scoring_thresholds(new_strictness)
         await update.message.reply_text(
-            f"✅ drop\\_below updated: `{current_drop:.2f}` → `{new_value:.2f}`\n"
-            f"Items with score below {new_value:.2f} will be filtered out.",
-            parse_mode="Markdown",
+            f"✅ Strictness updated: {current_strictness} → {new_strictness}\n"
+            f"Drop-below threshold: {thresholds['drop_below']:.2f}",
         )
 
     # ── Regenerate digest (/regenerate) ──
@@ -1206,7 +1268,6 @@ class DigestBot:
 
         # Save to database
         await self.db.set_setting("user_profile", json.dumps(profile, ensure_ascii=False))
-        await self.db.set_setting("filtering_strictness", strictness)
 
         # Update the filter agent's profile if orchestrator has one
         if hasattr(self.orchestrator, 'filter_agent') and self.orchestrator.filter_agent:
@@ -1378,7 +1439,8 @@ class DigestBot:
             BotCommand("items", "List this week's collected items"),
             BotCommand("delete", "Remove an item by ID"),
             BotCommand("setup", "Configure your interest profile"),
-            BotCommand("threshold", "View/set filter drop_below threshold"),
+            BotCommand("settings", "View your interest profile"),
+            BotCommand("threshold", "View/set filtering strictness"),
             BotCommand("language", "Choose digest language (RU/EN)"),
             BotCommand("provider", "Switch LLM provider"),
             BotCommand("estimate", "Estimate generation cost"),
@@ -1429,6 +1491,7 @@ class DigestBot:
         self.app.add_handler(CommandHandler("generate", self._handle_generate))
         self.app.add_handler(CommandHandler("dryrun", self._handle_dryrun))
         self.app.add_handler(CommandHandler("regenerate", self._handle_regenerate))
+        self.app.add_handler(CommandHandler("settings", self._handle_settings))
         self.app.add_handler(CommandHandler("threshold", self._handle_threshold))
         self.app.add_handler(CommandHandler("items", self._handle_items))
         self.app.add_handler(CommandHandler("delete", self._handle_delete))

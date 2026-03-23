@@ -93,11 +93,13 @@ async def mock_db(tmp_path):
 @pytest.fixture
 def sample_user_profile():
     return {
+        "version": "3.0",
         "user": {"preferred_name": "Test", "primary_language": "en"},
         "interest_areas": [
-            {"id": "ai", "weight": 0.8, "keywords": ["machine learning", "llm"]},
+            {"id": "ai", "name": "AI & ML", "weight": 0.8, "keywords": ["machine learning", "llm"]},
         ],
-        "filtering_strictness": "moderate",
+        "blocked_topics": [],
+        "strictness": "moderate",
     }
 
 

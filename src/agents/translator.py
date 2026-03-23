@@ -1,10 +1,10 @@
 """Translator agent — translates the final magazine into the user's chosen language."""
 
-import json
 import logging
 
 from ..db.database import Database
 from ..llm.provider import LLMProvider
+from ..profile_defaults import build_agent_profile_prompt
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class TranslatorAgent(BaseAgent):
         super().__init__(llm, model, db)
         self.user_profile = user_profile
         self._prompt_template = self._format_prompt(
-            user_profile_json=json.dumps(user_profile, ensure_ascii=False, indent=2)
+            user_profile_section=build_agent_profile_prompt(user_profile, "translator")
         )
 
     async def process(

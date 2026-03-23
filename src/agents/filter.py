@@ -1,12 +1,12 @@
 """Filter agent — evaluates item relevance and removes noise/duplicates before digest generation."""
 
-import json
 import logging
 from dataclasses import dataclass, field
 
 from ..db.database import Database
 from ..db.models import Item
 from ..llm.provider import LLMProvider
+from ..profile_defaults import build_agent_profile_prompt, get_scoring_thresholds
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class FilterAgent(BaseAgent):
         super().__init__(llm, model, db)
         self.user_profile = user_profile
         self._prompt_template = self._format_prompt(
-            user_profile_json=json.dumps(user_profile, ensure_ascii=False, indent=2)
+            user_profile_section=build_agent_profile_prompt(user_profile, "filter")
         )
 
     def update_profile(self, user_profile: dict) -> None:
@@ -69,7 +69,7 @@ class FilterAgent(BaseAgent):
         self.user_profile = user_profile
         self._prompt_template = self._load_prompt()
         self._prompt_template = self._format_prompt(
-            user_profile_json=json.dumps(user_profile, ensure_ascii=False, indent=2)
+            user_profile_section=build_agent_profile_prompt(user_profile, "filter")
         )
 
     OUTPUT_SCHEMA = {
@@ -170,20 +170,16 @@ class FilterAgent(BaseAgent):
             )
 
     def _build_user_message(self, items: list[Item]) -> str:
-        strictness = self.user_profile.get("filtering_strictness", "moderate")
-        drop_below = (
-            self.user_profile
-            .get("scoring_hints_for_python", {})
-            .get("thresholds", {})
-            .get("drop_below", None)
-        )
+        strictness = self.user_profile.get("strictness",
+                      self.user_profile.get("filtering_strictness", "moderate"))
+        thresholds = get_scoring_thresholds(strictness)
+        drop_below = thresholds["drop_below"]
 
         lines = [
             f"Filtering strictness: {strictness}",
+            f"Drop-below threshold: {drop_below:.2f} — filter ONLY items with relevance_score strictly below this value; keep everything at or above it regardless of strictness preset.",
+            f"\nItems to evaluate ({len(items)} total):\n",
         ]
-        if drop_below is not None:
-            lines.append(f"Drop-below threshold override: {drop_below:.2f} — filter ONLY items with relevance_score strictly below this value; keep everything at or above it regardless of strictness preset.")
-        lines.append(f"\nItems to evaluate ({len(items)} total):\n")
 
         for item in items:
             lines.append(

@@ -1,6 +1,5 @@
 """Researcher agent — produces research briefs via web search."""
 
-import json
 import logging
 from datetime import datetime
 from uuid import uuid4
@@ -8,6 +7,7 @@ from uuid import uuid4
 from ..db.database import Database
 from ..db.models import Cluster, Item
 from ..llm.provider import LLMProvider
+from ..profile_defaults import build_agent_profile_prompt
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class ResearcherAgent(BaseAgent):
         super().__init__(llm, model, db)
         self.user_profile = user_profile
         self._prompt_template = self._format_prompt(
-            user_profile_json=json.dumps(user_profile, ensure_ascii=False, indent=2)
+            user_profile_section=build_agent_profile_prompt(user_profile, "researcher")
         )
 
     async def process(

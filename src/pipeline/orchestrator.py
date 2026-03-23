@@ -216,12 +216,10 @@ class Orchestrator:
             # Resolve drop_below once for both file section and Telegram report
             drop_below = 0.25
             if self.filter_agent:
-                drop_below = (
-                    self.filter_agent.user_profile
-                    .get("scoring_hints_for_python", {})
-                    .get("thresholds", {})
-                    .get("drop_below", 0.25)
-                )
+                from ..profile_defaults import get_scoring_thresholds
+                strictness = self.filter_agent.user_profile.get("strictness",
+                              self.filter_agent.user_profile.get("filtering_strictness", "moderate"))
+                drop_below = get_scoring_thresholds(strictness)["drop_below"]
 
             # ── Append filtered-items section (if any) ──
             if filter_report:

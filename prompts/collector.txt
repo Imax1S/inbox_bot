@@ -6,7 +6,7 @@ Your job: given a user's message (which may be a URL with extracted article text
 3. Detected content language
 
 ## User Profile
-{user_profile_json}
+{user_profile_section}
 
 ## Rules
 - Tags should be lowercase, snake_case (e.g. "ai_regulation", "system_design") — Telegram requires underscores for hashtags
