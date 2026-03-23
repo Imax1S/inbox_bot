@@ -22,17 +22,31 @@ class FilteredItem:
 
 
 @dataclass
+class KeptItem:
+    id: str
+    relevance_score: float
+    reason: str
+
+
+@dataclass
 class FilterResult:
     kept_item_ids: list[str]
     filtered_items: list[FilteredItem]
+    kept_items_with_scores: list[KeptItem] = field(default_factory=list)
 
     @classmethod
     def from_json(cls, data: dict, valid_ids: set[str]) -> "FilterResult":
-        kept = [
-            item["id"]
-            for item in data.get("kept_items", [])
-            if item.get("id") in valid_ids
-        ]
+        kept = []
+        kept_with_scores = []
+        for item in data.get("kept_items", []):
+            if item.get("id") not in valid_ids:
+                continue
+            kept.append(item["id"])
+            kept_with_scores.append(KeptItem(
+                id=item["id"],
+                relevance_score=item.get("relevance_score", 0.0),
+                reason=item.get("reason", ""),
+            ))
         filtered = []
         for item in data.get("filtered_items", []):
             if item.get("id") not in valid_ids:
@@ -44,7 +58,7 @@ class FilterResult:
                 reason=item.get("reason", "No reason provided"),
                 duplicate_of=item.get("duplicate_of"),
             ))
-        return cls(kept_item_ids=kept, filtered_items=filtered)
+        return cls(kept_item_ids=kept, filtered_items=filtered, kept_items_with_scores=kept_with_scores)
 
 
 class FilterAgent(BaseAgent):
@@ -125,16 +139,53 @@ class FilterAgent(BaseAgent):
         "required": ["kept_items", "filtered_items"],
     }
 
+    _BATCH_SIZE = 30
+
     async def process(
         self,
         items: list[Item],
         run_id: str | None = None,
+        target_read_minutes: int | None = None,
     ) -> FilterResult:
         """Evaluate items for relevance and return filter decisions."""
         if not items:
             return FilterResult(kept_item_ids=[], filtered_items=[])
 
-        user_message = self._build_user_message(items)
+        if len(items) <= self._BATCH_SIZE:
+            return await self._process_batch(items, run_id, target_read_minutes)
+
+        # Split into batches and merge results
+        all_kept: list[str] = []
+        all_filtered: list[FilteredItem] = []
+        all_kept_with_scores: list[KeptItem] = []
+
+        for i in range(0, len(items), self._BATCH_SIZE):
+            batch = items[i : i + self._BATCH_SIZE]
+            result = await self._process_batch(batch, run_id, target_read_minutes)
+            all_kept.extend(result.kept_item_ids)
+            all_filtered.extend(result.filtered_items)
+            all_kept_with_scores.extend(result.kept_items_with_scores)
+
+        logger.info(
+            "Filter batched result: %d kept, %d filtered across %d batches",
+            len(all_kept),
+            len(all_filtered),
+            (len(items) + self._BATCH_SIZE - 1) // self._BATCH_SIZE,
+        )
+        return FilterResult(
+            kept_item_ids=all_kept,
+            filtered_items=all_filtered,
+            kept_items_with_scores=all_kept_with_scores,
+        )
+
+    async def _process_batch(
+        self,
+        items: list[Item],
+        run_id: str | None = None,
+        target_read_minutes: int | None = None,
+    ) -> FilterResult:
+        """Process a single batch of items through the filter."""
+        user_message = self._build_user_message(items, target_read_minutes)
         valid_ids = {item.id for item in items}
 
         try:
@@ -169,7 +220,11 @@ class FilterAgent(BaseAgent):
                 filtered_items=[],
             )
 
-    def _build_user_message(self, items: list[Item]) -> str:
+    def _build_user_message(
+        self,
+        items: list[Item],
+        target_read_minutes: int | None = None,
+    ) -> str:
         strictness = self.user_profile.get("filtering_strictness", "moderate")
         drop_below = (
             self.user_profile
@@ -183,6 +238,17 @@ class FilterAgent(BaseAgent):
         ]
         if drop_below is not None:
             lines.append(f"Drop-below threshold override: {drop_below:.2f} — filter ONLY items with relevance_score strictly below this value; keep everything at or above it regardless of strictness preset.")
+
+        # Budget hint for the LLM
+        if target_read_minutes and len(items) > 20:
+            max_items_hint = target_read_minutes * 2
+            lines.append(
+                f"\nBudget context: Target digest is {target_read_minutes} minutes. "
+                f"With {len(items)} items, filtering should be more aggressive to stay within budget. "
+                f"Aim to keep approximately {max_items_hint} items maximum "
+                f"(assuming ~2 min average per item when some go to quick bites)."
+            )
+
         lines.append(f"\nItems to evaluate ({len(items)} total):\n")
 
         for item in items:

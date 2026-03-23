@@ -131,6 +131,7 @@ def main() -> None:
         translator=translator,
         obsidian_writer=obsidian,
         filter_agent=filter_agent,
+        target_read_minutes=config.digest.target_read_minutes,
     )
 
     # Create dry-run orchestrator (uses mock LLM, saves to temp dir)
@@ -147,6 +148,7 @@ def main() -> None:
         obsidian_writer=dry_run_obsidian,
         filter_agent=FilterAgent(dry_run_llm, config.llm.filter_model, db, user_profile),
         dry_run=True,
+        target_read_minutes=config.digest.target_read_minutes,
     )
 
     # Create bot

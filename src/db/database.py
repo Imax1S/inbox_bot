@@ -102,6 +102,11 @@ class Database:
     async def init(self) -> None:
         async with aiosqlite.connect(self.db_path) as db:
             await db.executescript(SCHEMA_SQL)
+            # Run idempotent migrations
+            try:
+                await db.execute("ALTER TABLE items ADD COLUMN relevance_score REAL")
+            except Exception:
+                pass  # Column already exists
             await db.commit()
 
     # ── Items ──
@@ -185,6 +190,19 @@ class Database:
             await db.execute(
                 f"UPDATE items SET status = ? WHERE id IN ({placeholders})",
                 [status.value] + item_ids,
+            )
+            await db.commit()
+
+    async def update_item_relevance_score(
+        self, item_id: str, score: float | None
+    ) -> None:
+        """Update the relevance_score for a single item."""
+        if score is None:
+            return
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE items SET relevance_score = ? WHERE id = ?",
+                (score, item_id),
             )
             await db.commit()
 

@@ -35,4 +35,11 @@ If you are producing 12+ clusters, reconsider: likely several single-item medium
 - Do NOT merge an article about AI fatigue with a report about agentic coding just because both mention "AI"
 - Do NOT produce 15 clusters from 20 items — most single-item medium articles belong in quick_bites
 
+## Read Time Budget
+When a total read time budget is provided in the user message:
+- The sum of all cluster estimated_read_minutes MUST NOT exceed the budget
+- If you have more worthy items than fit the budget, route overflow to quick_bites
+- Prioritize clusters that match user's highest-weight interest areas
+- Quick bites are NOT wasted — each gets a full paragraph in the digest
+
 Use the provided tool to return your clustering result.

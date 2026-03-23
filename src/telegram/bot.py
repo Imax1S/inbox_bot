@@ -35,6 +35,7 @@ from ..llm.provider import create_provider, estimate_cost
 from ..pipeline.orchestrator import Orchestrator
 from ..pipeline.status_updater import StatusUpdater
 from ..rss_fetcher import RSSFetcher
+from ..rss_suggestions import get_suggestions_for_profile
 
 logger = logging.getLogger(__name__)
 
@@ -1267,7 +1268,8 @@ class DigestBot:
                 "Usage:\n"
                 "/rss add <url> — Subscribe to an RSS feed\n"
                 "/rss list — Show subscribed feeds\n"
-                "/rss remove <number> — Unsubscribe by number from list"
+                "/rss remove <number> — Unsubscribe by number from list\n"
+                "/rss suggest — Show recommended feeds for your profile"
             )
             return
 
@@ -1279,10 +1281,12 @@ class DigestBot:
             await self._rss_list(update)
         elif subcommand == "remove":
             await self._rss_remove(update, args[1:])
+        elif subcommand == "suggest":
+            await self._rss_suggest(update)
         else:
             await update.message.reply_text(
                 f"Unknown subcommand: {subcommand}\n"
-                "Use /rss add, /rss list, or /rss remove."
+                "Use /rss add, /rss list, /rss remove, or /rss suggest."
             )
 
     async def _rss_add(self, update: Update, args: list[str]) -> None:
@@ -1364,6 +1368,41 @@ class DigestBot:
         await self.db.remove_rss_feed(feed["id"])
         title = feed["title"] or "Untitled"
         await update.message.reply_text(f"🗑 Removed feed: {title}\n{feed['url']}")
+
+    async def _rss_suggest(self, update: Update) -> None:
+        """Show recommended RSS feeds based on user profile."""
+        from ..config import get_user_profile
+
+        user_profile = await get_user_profile(self.db, self.config.user_profile)
+        if not user_profile.get("interest_areas"):
+            await update.message.reply_text(
+                "No interest areas found in your profile.\n"
+                "Run /setup first to configure your interests."
+            )
+            return
+
+        feeds = await self.db.get_rss_feeds()
+        existing_urls = {f["url"] for f in feeds}
+
+        suggestions = get_suggestions_for_profile(user_profile, existing_urls)
+        if not suggestions:
+            await update.message.reply_text(
+                "No new feed suggestions available — "
+                "you may already be subscribed to all recommended feeds!"
+            )
+            return
+
+        lines = ["📡 Recommended RSS feeds for your profile:\n"]
+        for area_name, area_feeds in suggestions.items():
+            lines.append(f"\n🏷 {area_name}:")
+            for feed in area_feeds:
+                lines.append(
+                    f"  • {feed['title']}\n"
+                    f"    {feed['description']}\n"
+                    f"    /rss add {feed['url']}"
+                )
+
+        await update.message.reply_text("\n".join(lines))
 
     # ── Bot Setup ──
 

@@ -10,6 +10,7 @@ from ..agents.filter import FilterAgent
 from ..agents.researcher import ResearcherAgent
 from ..agents.translator import TranslatorAgent
 from ..agents.writer import WriterAgent
+from ..content.dedup import find_near_duplicates
 from ..db.database import Database
 from ..db.models import ItemStatus, PipelineRun, PipelineStatus
 from ..llm.provider import estimate_cost
@@ -36,6 +37,7 @@ class Orchestrator:
         obsidian_writer: ObsidianWriter,
         filter_agent: FilterAgent | None = None,
         dry_run: bool = False,
+        target_read_minutes: int = 25,
     ):
         self.db = db
         self.clusterer = clusterer
@@ -46,6 +48,7 @@ class Orchestrator:
         self.obsidian_writer = obsidian_writer
         self.filter_agent = filter_agent
         self.dry_run = dry_run
+        self.target_read_minutes = target_read_minutes
 
     async def run(
         self,
@@ -85,15 +88,52 @@ class Orchestrator:
 
         # Track filtered items for user notification
         filter_report: list[dict] = []
+        target_read_minutes = self.target_read_minutes
 
         try:
+            # ── Pre-dedup: remove near-duplicate items by summary similarity ──
+            dup_pairs = find_near_duplicates(items, threshold=0.6)
+            pre_dedup_report: list[dict] = []
+            if dup_pairs:
+                dup_ids = {pair[0] for pair in dup_pairs}
+                pre_dedup_count = len(items)
+                # Build pre-dedup report entries
+                for dup_id, keep_id in dup_pairs:
+                    dup_item = next((i for i in items if i.id == dup_id), None)
+                    keep_item = next((i for i in items if i.id == keep_id), None)
+                    if dup_item:
+                        pre_dedup_report.append({
+                            "summary": dup_item.summary[:80] if dup_item.summary else dup_id[:8],
+                            "reason": f"Near-duplicate of: {keep_item.summary[:40] if keep_item else keep_id[:8]}",
+                            "type": "duplicate",
+                            "score": 0.0,
+                        })
+                items = [item for item in items if item.id not in dup_ids]
+                logger.info(
+                    "Pre-dedup: removed %d near-duplicates, %d items remain",
+                    pre_dedup_count - len(items),
+                    len(items),
+                )
+
             # ── Step 0: Filter (if filter agent is configured) ──
             if self.filter_agent:
                 if status_updater:
                     await status_updater.update(0, f"Filtering {len(items)} items...")
                 logger.info("Filtering %d items for %s", len(items), week_id)
 
-                filter_result = await self.filter_agent.process(items, run_id=run_id)
+                filter_result = await self.filter_agent.process(
+                    items, run_id=run_id, target_read_minutes=self.target_read_minutes,
+                )
+
+                # Persist relevance scores for all items
+                for kept in filter_result.kept_items_with_scores:
+                    await self.db.update_item_relevance_score(
+                        kept.id, kept.relevance_score,
+                    )
+                for filtered in filter_result.filtered_items:
+                    await self.db.update_item_relevance_score(
+                        filtered.id, filtered.relevance_score,
+                    )
 
                 if filter_result.filtered_items:
                     # Build report for user notification
@@ -130,12 +170,41 @@ class Orchestrator:
                     )
                     return None
 
+            # Include pre-dedup entries in filter report
+            filter_report = pre_dedup_report + filter_report
+
             # ── Step 1: Cluster ──
             if status_updater:
                 await status_updater.update(1, f"Clustering {len(items)} items...")
             logger.info("Clustering %d items for %s", len(items), week_id)
 
-            cluster_result = await self.clusterer.process(items, run_id=run_id)
+            cluster_result = await self.clusterer.process(
+                items, run_id=run_id, target_read_minutes=target_read_minutes,
+            )
+
+            # Post-cluster budget validation: trim lowest-priority clusters if over budget
+            total_estimated = sum(
+                c.estimated_read_minutes for c in cluster_result.clusters
+            )
+            if total_estimated > target_read_minutes:
+                logger.warning(
+                    "Cluster total (%d min) exceeds budget (%d min) — trimming",
+                    total_estimated,
+                    target_read_minutes,
+                )
+                sorted_clusters = sorted(
+                    cluster_result.clusters, key=lambda c: c.priority,
+                )
+                kept_clusters = []
+                running_total = 0
+                for c in sorted_clusters:
+                    if running_total + c.estimated_read_minutes <= target_read_minutes:
+                        kept_clusters.append(c)
+                        running_total += c.estimated_read_minutes
+                    else:
+                        cluster_result.quick_bites_item_ids.extend(c.item_ids)
+                cluster_result.clusters = kept_clusters
+
             logger.info(
                 "Formed %d clusters + %d quick bites",
                 len(cluster_result.clusters),
@@ -199,6 +268,7 @@ class Orchestrator:
                 all_items=items,
                 week_id=week_id,
                 run_id=run_id,
+                target_read_minutes=target_read_minutes,
             )
 
             # ── Step 5: Translate (if needed) ──
