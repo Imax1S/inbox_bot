@@ -98,6 +98,24 @@ class DigestBot:
     def _is_authorized(self, user_id: int) -> bool:
         return user_id in self.config.telegram.user_ids
 
+    async def _load_profile(self) -> dict | None:
+        """Load user profile from DB, return parsed dict or None."""
+        raw = await self.db.get_setting("user_profile")
+        if not raw:
+            return None
+        return json.loads(raw)
+
+    async def _save_profile(self, profile: dict) -> None:
+        """Save profile to DB and refresh filter agent prompt."""
+        await self.db.set_setting(
+            "user_profile", json.dumps(profile, ensure_ascii=False)
+        )
+        if (
+            hasattr(self.orchestrator, "filter_agent")
+            and self.orchestrator.filter_agent
+        ):
+            self.orchestrator.filter_agent.update_profile(profile)
+
     # ── Message Handler ──
 
     async def _handle_message(
@@ -193,6 +211,9 @@ class DigestBot:
             "/delete <id> — Remove an item\n"
             "/setup — Configure your interest profile\n"
             "/settings — View your interest profile\n"
+            "/topic — Manage interest areas\n"
+            "/block — Add blocked topic\n"
+            "/unblock — Remove blocked topic\n"
             "/threshold [preset] — View/set filtering strictness\n"
             "/language — Choose digest language\n"
             "/provider — Switch LLM provider\n"
@@ -893,7 +914,10 @@ class DigestBot:
             "relaxed": "🔓 Relaxed",
         }
         lines.append(f"\n{strictness_labels.get(strictness, strictness)}")
-        lines.append("\nUse /setup to reconfigure.")
+        lines.append(
+            "\n/topic — manage areas  •  /block — manage blocked\n"
+            "/threshold — strictness  •  /setup — full reconfigure"
+        )
 
         await update.message.reply_text(
             "\n".join(lines), parse_mode="Markdown"
@@ -960,6 +984,322 @@ class DigestBot:
             f"✅ Strictness updated: {current_strictness} → {new_strictness}\n"
             f"Drop-below threshold: {thresholds['drop_below']:.2f}",
         )
+
+    # ── Topic management (/topic) ──
+
+    async def _handle_topic(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        profile = await self._load_profile()
+        if not profile:
+            await update.message.reply_text(
+                "No profile configured. Run /setup first."
+            )
+            return
+
+        args = context.args or []
+        areas = profile.get("interest_areas", [])
+
+        # /topic — list areas
+        if not args:
+            if not areas:
+                await update.message.reply_text(
+                    "No interest areas configured. Use /topic add <name> or /setup."
+                )
+                return
+            lines = ["📌 *Interest areas:*\n"]
+            for area in areas:
+                name = area.get("name", area.get("id", "?"))
+                weight = area.get("weight", 0.0)
+                priority = _priority_for_weight(weight)
+                label = PRIORITY_LABELS.get(priority, "")
+                display = name.replace("_", "\\_")
+                kw = area.get("keywords", [])
+                kw_str = ", ".join(kw[:5])
+                if len(kw) > 5:
+                    kw_str += f" (+{len(kw) - 5})"
+                lines.append(f"{label} *{display}* ({weight:.2f})")
+                if kw_str:
+                    lines.append(f"  _{kw_str}_")
+            lines.append(
+                "\n`/topic add <name>` — add area\n"
+                "`/topic remove <name>` — remove area\n"
+                "`/topic keywords <name> add|remove <kw>` — edit keywords"
+            )
+            await update.message.reply_text(
+                "\n".join(lines), parse_mode="Markdown"
+            )
+            return
+
+        action = args[0].lower()
+
+        # /topic add <name> [weight]
+        if action == "add":
+            if len(args) < 2:
+                await update.message.reply_text(
+                    "Usage: /topic add <name> [weight]\n"
+                    "Example: /topic add Cybersecurity 0.80"
+                )
+                return
+            # Name can be multi-word: everything between action and optional trailing float
+            raw_parts = args[1:]
+            weight = 0.70  # default medium
+            # Check if last arg is a float
+            try:
+                weight = float(raw_parts[-1])
+                weight = max(0.0, min(1.0, weight))
+                name_parts = raw_parts[:-1]
+            except ValueError:
+                name_parts = raw_parts
+
+            if not name_parts:
+                await update.message.reply_text("Please provide a topic name.")
+                return
+
+            area_name = " ".join(name_parts)
+            area_id = area_name.lower().replace(" ", "_").replace("&", "and")
+
+            # Check for duplicate
+            if any(a.get("id") == area_id for a in areas):
+                await update.message.reply_text(
+                    f"Area '{area_name}' already exists. Use /topic remove first."
+                )
+                return
+
+            areas.append({
+                "id": area_id,
+                "name": area_name,
+                "weight": weight,
+                "keywords": [],
+            })
+            profile["interest_areas"] = areas
+            await self._save_profile(profile)
+
+            priority = _priority_for_weight(weight)
+            label = PRIORITY_LABELS.get(priority, "")
+            await update.message.reply_text(
+                f"✅ Added: {label} {area_name} ({weight:.2f})\n\n"
+                f"Add keywords: /topic keywords {area_name} add <keyword>"
+            )
+            return
+
+        # /topic remove <name>
+        if action in ("remove", "rm", "delete"):
+            if len(args) < 2:
+                await update.message.reply_text("Usage: /topic remove <name>")
+                return
+            search = " ".join(args[1:]).lower()
+            match = next(
+                (a for a in areas
+                 if a.get("id", "").lower() == search
+                 or a.get("name", "").lower() == search),
+                None,
+            )
+            if not match:
+                await update.message.reply_text(
+                    f"Area '{search}' not found. Use /topic to see the list."
+                )
+                return
+            areas.remove(match)
+            profile["interest_areas"] = areas
+            await self._save_profile(profile)
+            await update.message.reply_text(
+                f"✅ Removed: {match.get('name', match.get('id'))}"
+            )
+            return
+
+        # /topic weight <name> <value>
+        if action == "weight":
+            if len(args) < 3:
+                await update.message.reply_text(
+                    "Usage: /topic weight <name> <value>\n"
+                    "Example: /topic weight AI 0.95"
+                )
+                return
+            try:
+                new_weight = float(args[-1])
+                new_weight = max(0.0, min(1.0, new_weight))
+            except ValueError:
+                await update.message.reply_text("Weight must be a number 0.0–1.0.")
+                return
+            search = " ".join(args[1:-1]).lower()
+            match = next(
+                (a for a in areas
+                 if a.get("id", "").lower() == search
+                 or a.get("name", "").lower() == search),
+                None,
+            )
+            if not match:
+                await update.message.reply_text(
+                    f"Area '{search}' not found. Use /topic to see the list."
+                )
+                return
+            old_weight = match.get("weight", 0.0)
+            match["weight"] = new_weight
+            await self._save_profile(profile)
+            label = PRIORITY_LABELS.get(_priority_for_weight(new_weight), "")
+            await update.message.reply_text(
+                f"✅ {match['name']}: {old_weight:.2f} → {label} {new_weight:.2f}"
+            )
+            return
+
+        # /topic keywords <name> add|remove <keyword>
+        if action in ("keywords", "kw"):
+            if len(args) < 4:
+                await update.message.reply_text(
+                    "Usage: /topic keywords <name> add|remove <keyword>\n"
+                    "Example: /topic keywords AI add transformers"
+                )
+                return
+            # Find the area name — it's between "keywords" and "add"/"remove"
+            # Look for add/remove in args to split
+            kw_action_idx = None
+            for i, a in enumerate(args[1:], 1):
+                if a.lower() in ("add", "remove", "rm"):
+                    kw_action_idx = i
+                    break
+            if kw_action_idx is None or kw_action_idx < 2 or kw_action_idx >= len(args) - 1:
+                await update.message.reply_text(
+                    "Usage: /topic keywords <name> add|remove <keyword>"
+                )
+                return
+            search = " ".join(args[1:kw_action_idx]).lower()
+            kw_action = args[kw_action_idx].lower()
+            keyword = " ".join(args[kw_action_idx + 1:])
+
+            match = next(
+                (a for a in areas
+                 if a.get("id", "").lower() == search
+                 or a.get("name", "").lower() == search),
+                None,
+            )
+            if not match:
+                await update.message.reply_text(
+                    f"Area '{search}' not found. Use /topic to see the list."
+                )
+                return
+
+            kws = match.get("keywords", [])
+            if kw_action == "add":
+                if keyword.lower() in [k.lower() for k in kws]:
+                    await update.message.reply_text(
+                        f"Keyword '{keyword}' already exists in {match['name']}."
+                    )
+                    return
+                kws.append(keyword)
+                match["keywords"] = kws
+                await self._save_profile(profile)
+                await update.message.reply_text(
+                    f"✅ Added keyword '{keyword}' to {match['name']}"
+                )
+            else:  # remove
+                original_len = len(kws)
+                kws = [k for k in kws if k.lower() != keyword.lower()]
+                if len(kws) == original_len:
+                    await update.message.reply_text(
+                        f"Keyword '{keyword}' not found in {match['name']}."
+                    )
+                    return
+                match["keywords"] = kws
+                await self._save_profile(profile)
+                await update.message.reply_text(
+                    f"✅ Removed keyword '{keyword}' from {match['name']}"
+                )
+            return
+
+        await update.message.reply_text(
+            "Unknown action. Use: /topic, /topic add, /topic remove, "
+            "/topic weight, /topic keywords"
+        )
+
+    # ── Block/Unblock topics (/block, /unblock) ──
+
+    async def _handle_block(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        profile = await self._load_profile()
+        if not profile:
+            await update.message.reply_text(
+                "No profile configured. Run /setup first."
+            )
+            return
+
+        args = context.args or []
+        if not args:
+            blocked = profile.get("blocked_topics", [])
+            if blocked:
+                lines = ["🚫 *Blocked topics:*\n"]
+                for t in blocked:
+                    lines.append(f"• {t}")
+                lines.append("\n`/block <topic>` — add\n`/unblock <topic>` — remove")
+                await update.message.reply_text(
+                    "\n".join(lines), parse_mode="Markdown"
+                )
+            else:
+                await update.message.reply_text(
+                    "No blocked topics. Use /block <topic> to add one."
+                )
+            return
+
+        topic = " ".join(args)
+        blocked = profile.get("blocked_topics", [])
+
+        if topic.lower() in [b.lower() for b in blocked]:
+            await update.message.reply_text(f"'{topic}' is already blocked.")
+            return
+
+        blocked.append(topic)
+        profile["blocked_topics"] = blocked
+        await self._save_profile(profile)
+        await update.message.reply_text(f"✅ Blocked: {topic}")
+
+    async def _handle_unblock(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        profile = await self._load_profile()
+        if not profile:
+            await update.message.reply_text(
+                "No profile configured. Run /setup first."
+            )
+            return
+
+        args = context.args or []
+        if not args:
+            await update.message.reply_text("Usage: /unblock <topic>")
+            return
+
+        topic = " ".join(args)
+        blocked = profile.get("blocked_topics", [])
+        original_len = len(blocked)
+        blocked = [b for b in blocked if b.lower() != topic.lower()]
+
+        if len(blocked) == original_len:
+            await update.message.reply_text(
+                f"'{topic}' is not in the blocked list. Use /block to see all."
+            )
+            return
+
+        profile["blocked_topics"] = blocked
+        await self._save_profile(profile)
+        await update.message.reply_text(f"✅ Unblocked: {topic}")
 
     # ── Regenerate digest (/regenerate) ──
 
@@ -1440,6 +1780,9 @@ class DigestBot:
             BotCommand("delete", "Remove an item by ID"),
             BotCommand("setup", "Configure your interest profile"),
             BotCommand("settings", "View your interest profile"),
+            BotCommand("topic", "Manage interest areas (add/remove/weight)"),
+            BotCommand("block", "Block a topic from digests"),
+            BotCommand("unblock", "Unblock a topic"),
             BotCommand("threshold", "View/set filtering strictness"),
             BotCommand("language", "Choose digest language (RU/EN)"),
             BotCommand("provider", "Switch LLM provider"),
@@ -1492,6 +1835,9 @@ class DigestBot:
         self.app.add_handler(CommandHandler("dryrun", self._handle_dryrun))
         self.app.add_handler(CommandHandler("regenerate", self._handle_regenerate))
         self.app.add_handler(CommandHandler("settings", self._handle_settings))
+        self.app.add_handler(CommandHandler("topic", self._handle_topic))
+        self.app.add_handler(CommandHandler("block", self._handle_block))
+        self.app.add_handler(CommandHandler("unblock", self._handle_unblock))
         self.app.add_handler(CommandHandler("threshold", self._handle_threshold))
         self.app.add_handler(CommandHandler("items", self._handle_items))
         self.app.add_handler(CommandHandler("delete", self._handle_delete))
