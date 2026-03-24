@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 class EditorAgent(BaseAgent):
     prompt_file = "editor.txt"
     agent_name = "editor"
+    MAX_TOKENS = 32768
 
     def __init__(
         self,
@@ -25,6 +26,13 @@ class EditorAgent(BaseAgent):
     ):
         super().__init__(llm, model, db)
         self.user_profile = user_profile
+        self._prompt_template = self._format_prompt(
+            user_profile_section=build_agent_profile_prompt(user_profile, "editor")
+        )
+
+    def update_profile(self, user_profile: dict) -> None:
+        self.user_profile = user_profile
+        self._prompt_template = self._load_prompt()
         self._prompt_template = self._format_prompt(
             user_profile_section=build_agent_profile_prompt(user_profile, "editor")
         )
@@ -46,7 +54,7 @@ class EditorAgent(BaseAgent):
         response = await self._call_llm(
             user_message=user_message,
             run_id=run_id,
-            max_tokens=32768,
+            max_tokens=self.MAX_TOKENS,
             temperature=0.5,
         )
 

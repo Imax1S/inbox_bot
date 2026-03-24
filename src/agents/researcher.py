@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 class ResearcherAgent(BaseAgent):
     prompt_file = "researcher.txt"
     agent_name = "researcher"
+    MAX_TOKENS = 2048
 
     def __init__(
         self,
@@ -26,6 +27,13 @@ class ResearcherAgent(BaseAgent):
     ):
         super().__init__(llm, model, db)
         self.user_profile = user_profile
+        self._prompt_template = self._format_prompt(
+            user_profile_section=build_agent_profile_prompt(user_profile, "researcher")
+        )
+
+    def update_profile(self, user_profile: dict) -> None:
+        self.user_profile = user_profile
+        self._prompt_template = self._load_prompt()
         self._prompt_template = self._format_prompt(
             user_profile_section=build_agent_profile_prompt(user_profile, "researcher")
         )
@@ -47,7 +55,7 @@ class ResearcherAgent(BaseAgent):
                 model=self.model,
                 system_prompt=self._prompt_template,
                 user_message=user_message,
-                max_tokens=2048,
+                max_tokens=self.MAX_TOKENS,
                 temperature=0.5,
             )
 

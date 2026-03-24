@@ -11,7 +11,7 @@ from ..agents.researcher import ResearcherAgent
 from ..agents.translator import TranslatorAgent
 from ..agents.writer import WriterAgent
 from ..db.database import Database
-from ..db.models import ItemStatus, PipelineRun, PipelineStatus
+from ..db.models import DigestResult, Item, ItemStatus, PipelineRun, PipelineStatus
 from ..llm.provider import estimate_cost
 from ..obsidian_writer import ObsidianWriter
 from .status_updater import StatusUpdater
@@ -51,12 +51,16 @@ class Orchestrator:
         self,
         week_id: str,
         status_updater: StatusUpdater | None = None,
-    ) -> str | None:
+        items_override: list[Item] | None = None,
+        digest_language_override: str | None = None,
+    ) -> DigestResult | None:
         """Run the full digest pipeline.
 
-        Returns the path to the saved file, or None if no items.
+        Returns the saved digest result, or None if no items.
         """
-        items = await self.db.get_items_by_week(week_id, status=ItemStatus.COLLECTED)
+        items = items_override
+        if items is None:
+            items = await self.db.get_items_by_week(week_id, status=ItemStatus.COLLECTED)
         if not items:
             logger.info("No items for %s — skipping", week_id)
             return None
@@ -75,7 +79,9 @@ class Orchestrator:
         total_output = 0
 
         # Read user's language preference (default: English)
-        digest_language = await self.db.get_setting("digest_language", "en")
+        digest_language = digest_language_override
+        if digest_language is None:
+            digest_language = await self.db.get_setting("digest_language", "en")
         needs_translation = digest_language != "en"
         lang_name = LANGUAGE_NAMES.get(digest_language, digest_language)
         logger.info("Digest language: %s (translation needed: %s)", lang_name, needs_translation)
@@ -316,7 +322,13 @@ class Orchestrator:
                 cost,
             )
 
-            return str(file_path)
+            return DigestResult(
+                file_path=str(file_path),
+                clusters=cluster_result.clusters,
+                articles=articles,
+                quick_bites_item_ids=cluster_result.quick_bites_item_ids,
+                items=items,
+            )
 
         except Exception as e:
             logger.exception("Pipeline failed for %s: %s", week_id, e)

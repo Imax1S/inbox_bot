@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 class ClustererAgent(BaseAgent):
     prompt_file = "clusterer.txt"
     agent_name = "clusterer"
+    MAX_TOKENS = 8192
 
     OUTPUT_SCHEMA = {
         "type": "object",
@@ -75,6 +76,13 @@ class ClustererAgent(BaseAgent):
             user_profile_section=build_agent_profile_prompt(user_profile, "clusterer")
         )
 
+    def update_profile(self, user_profile: dict) -> None:
+        self.user_profile = user_profile
+        self._prompt_template = self._load_prompt()
+        self._prompt_template = self._format_prompt(
+            user_profile_section=build_agent_profile_prompt(user_profile, "clusterer")
+        )
+
     async def process(
         self,
         items: list[Item],
@@ -90,7 +98,7 @@ class ClustererAgent(BaseAgent):
                 tool_description="Group items into coherent topic clusters for the weekly digest",
                 output_schema=self.OUTPUT_SCHEMA,
                 run_id=run_id,
-                max_tokens=8192,
+                max_tokens=self.MAX_TOKENS,
                 temperature=0.3,
             )
             result = ClusterResult.from_json(data)

@@ -56,6 +56,13 @@ class CollectorAgent(BaseAgent):
             user_profile_section=build_agent_profile_prompt(user_profile, "collector")
         )
 
+    def update_profile(self, user_profile: dict) -> None:
+        self.user_profile = user_profile
+        self._prompt_template = self._load_prompt()
+        self._prompt_template = self._format_prompt(
+            user_profile_section=build_agent_profile_prompt(user_profile, "collector")
+        )
+
     async def process(
         self,
         raw_content: str,

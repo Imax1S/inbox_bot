@@ -21,6 +21,15 @@ from .llm.provider import create_provider
 from .obsidian_writer import ObsidianWriter
 from .pipeline.orchestrator import Orchestrator
 from .pipeline.scheduler import setup_rss_schedule, setup_schedule
+from .smoke_test import (
+    SmokeClustererAgent,
+    SmokeEditorAgent,
+    SmokeFilterAgent,
+    SmokeResearcherAgent,
+    SmokeTranslatorAgent,
+    SmokeWriterAgent,
+    get_smoke_models,
+)
 from .telegram.bot import DigestBot
 
 
@@ -149,6 +158,21 @@ def main() -> None:
         dry_run=True,
     )
 
+    smoke_fast_model, smoke_quality_model = get_smoke_models(config.llm.provider)
+    smoke_dir = Path(tempfile.gettempdir()) / "inbox_bot_smoketest"
+    smoke_obsidian = ObsidianWriter(ObsidianConfig(vault_path=smoke_dir))
+    smoke_test_orchestrator = Orchestrator(
+        db=db,
+        clusterer=SmokeClustererAgent(llm, smoke_fast_model, db, user_profile),
+        researcher=SmokeResearcherAgent(llm, smoke_quality_model, db, user_profile),
+        writer=SmokeWriterAgent(llm, smoke_quality_model, db, user_profile),
+        editor=SmokeEditorAgent(llm, smoke_quality_model, db, user_profile),
+        translator=SmokeTranslatorAgent(llm, smoke_fast_model, db, user_profile),
+        obsidian_writer=smoke_obsidian,
+        filter_agent=SmokeFilterAgent(llm, smoke_fast_model, db, user_profile),
+        dry_run=True,
+    )
+
     # Create bot
     bot = DigestBot(
         config=config,
@@ -157,6 +181,7 @@ def main() -> None:
         orchestrator=orchestrator,
         profiler=profiler,
         dry_run_orchestrator=dry_run_orchestrator,
+        smoke_test_orchestrator=smoke_test_orchestrator,
     )
 
     # Build the application
@@ -168,6 +193,7 @@ def main() -> None:
         config=config.schedule,
         orchestrator=orchestrator,
         chat_ids=config.telegram.user_ids,
+        digest_bot=bot,
     )
 
     # Set up RSS feed polling

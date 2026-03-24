@@ -79,6 +79,15 @@ class ClusterResult:
 
 
 @dataclass
+class DigestResult:
+    file_path: str
+    clusters: list[Cluster]
+    articles: dict[str, str]
+    quick_bites_item_ids: list[str]
+    items: list[Item]
+
+
+@dataclass
 class StepLog:
     id: str
     run_id: str

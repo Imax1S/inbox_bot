@@ -1,9 +1,11 @@
 """Telegram bot with all commands — message collection via Collector agent + DB."""
 
 import asyncio
+import html
 import io
 import json
 import logging
+import re
 from datetime import datetime
 from uuid import uuid4
 
@@ -30,11 +32,24 @@ from ..config import Config, get_provider_defaults
 from ..content.text_classifier import classify_message
 from ..content.url_parser import fetch_and_extract
 from ..db.database import Database
-from ..db.models import Item, ItemStatus, ItemType
+from ..db.models import Cluster, DigestResult, Item, ItemStatus, ItemType
+from ..demo_content import build_demo_items
 from ..llm.provider import create_provider, estimate_cost
 from ..pipeline.orchestrator import Orchestrator
 from ..pipeline.status_updater import StatusUpdater
 from ..rss_fetcher import RSSFetcher
+from ..smoke_test import (
+    SMOKE_ITEM_LIMIT_DEFAULT,
+    SMOKE_ITEM_LIMIT_MAX,
+    SmokeClustererAgent,
+    SmokeEditorAgent,
+    SmokeFilterAgent,
+    SmokeResearcherAgent,
+    SmokeTranslatorAgent,
+    SmokeWriterAgent,
+    get_smoke_models,
+    prepare_smoke_test_items,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +99,7 @@ class DigestBot:
         orchestrator: Orchestrator,
         profiler: ProfilerAgent | None = None,
         dry_run_orchestrator: Orchestrator | None = None,
+        smoke_test_orchestrator: Orchestrator | None = None,
     ):
         self.config = config
         self.db = db
@@ -91,9 +107,12 @@ class DigestBot:
         self.orchestrator = orchestrator
         self.profiler = profiler
         self.dry_run_orchestrator = dry_run_orchestrator
+        self.smoke_test_orchestrator = smoke_test_orchestrator
         self.app: Application | None = None
         self._generating = False
         self._dry_running = False
+        self._smoke_testing = False
+        self._feedback_map: dict[str, dict] = {}
 
     def _is_authorized(self, user_id: int) -> bool:
         return user_id in self.config.telegram.user_ids
@@ -107,14 +126,256 @@ class DigestBot:
 
     async def _save_profile(self, profile: dict) -> None:
         """Save profile to DB and refresh filter agent prompt."""
+        self.config.user_profile = profile
         await self.db.set_setting(
             "user_profile", json.dumps(profile, ensure_ascii=False)
         )
-        if (
-            hasattr(self.orchestrator, "filter_agent")
-            and self.orchestrator.filter_agent
-        ):
-            self.orchestrator.filter_agent.update_profile(profile)
+        agents = [self.collector]
+        for orchestrator in [
+            self.orchestrator,
+            self.dry_run_orchestrator,
+            self.smoke_test_orchestrator,
+        ]:
+            if not orchestrator:
+                continue
+            agents.extend([
+                getattr(orchestrator, "clusterer", None),
+                getattr(orchestrator, "researcher", None),
+                getattr(orchestrator, "writer", None),
+                getattr(orchestrator, "editor", None),
+                getattr(orchestrator, "translator", None),
+                getattr(orchestrator, "filter_agent", None),
+            ])
+        for agent in agents:
+            if agent and hasattr(agent, "update_profile"):
+                agent.update_profile(profile)
+
+    @staticmethod
+    def _normalize_topic_token(value: str) -> str:
+        normalized = re.sub(r"[_\W]+", " ", value.casefold(), flags=re.UNICODE)
+        return " ".join(normalized.split())
+
+    def _truncate_preview(self, text: str, max_len: int = 300) -> str:
+        text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+        text = re.sub(r"`([^`]*)`", r"\1", text)
+        text = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text)
+        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
+        text = re.sub(r"[>*_~]", " ", text)
+        text = " ".join(text.split()).strip()
+
+        if not text:
+            return "No preview available."
+        if len(text) <= max_len:
+            return text
+
+        candidate = text[: max_len + 1]
+        sentence_endings = [candidate.rfind(marker) for marker in (". ", "! ", "? ")]
+        boundary = max(sentence_endings)
+        if boundary >= max_len // 2:
+            return candidate[: boundary + 1].strip()
+
+        word_boundary = candidate.rfind(" ")
+        if word_boundary > 0:
+            candidate = candidate[:word_boundary]
+        else:
+            candidate = candidate[:max_len]
+        return candidate.rstrip(" ,;:-") + "..."
+
+    def _map_cluster_to_areas(
+        self,
+        cluster: Cluster,
+        items: list[Item],
+        interest_areas: list[dict],
+    ) -> list[str]:
+        item_lookup = {item.id: item for item in items}
+        cluster_tags: set[str] = set()
+        for item_id in cluster.item_ids:
+            item = item_lookup.get(item_id)
+            if not item:
+                continue
+            for tag in item.tags:
+                normalized_tag = self._normalize_topic_token(tag)
+                if normalized_tag:
+                    cluster_tags.add(normalized_tag)
+        if not cluster_tags or not interest_areas:
+            return []
+
+        matched_area_ids: list[str] = []
+        for area in interest_areas:
+            area_id = area.get("id")
+            if not area_id:
+                continue
+
+            candidates = {
+                self._normalize_topic_token(str(candidate))
+                for candidate in [
+                    area.get("name", ""),
+                    area_id,
+                    *area.get("keywords", []),
+                ]
+                if candidate
+            }
+            if not candidates:
+                continue
+
+            is_match = False
+            for tag in cluster_tags:
+                tag_tokens = set(tag.split())
+                for candidate in candidates:
+                    candidate_tokens = set(candidate.split())
+                    if (
+                        tag == candidate
+                        or tag_tokens.issubset(candidate_tokens)
+                        or candidate_tokens.issubset(tag_tokens)
+                    ):
+                        is_match = True
+                        break
+                if is_match:
+                    matched_area_ids.append(area_id)
+                    break
+
+        return matched_area_ids
+
+    async def _send_feedback_messages(
+        self,
+        chat_id: int,
+        context: ContextTypes.DEFAULT_TYPE,
+        result: DigestResult,
+        profile: dict,
+    ) -> None:
+        interest_areas = profile.get("interest_areas", [])
+        sorted_clusters = sorted(result.clusters, key=lambda cluster: cluster.priority)
+
+        for cluster in sorted_clusters:
+            token = uuid4().hex[:6]
+            while token in self._feedback_map:
+                token = uuid4().hex[:6]
+
+            matched_area_ids = self._map_cluster_to_areas(
+                cluster,
+                result.items,
+                interest_areas,
+            )
+            week_id = result.items[0].week_id if result.items else Database.current_week_id()
+            self._feedback_map[token] = {
+                "week_id": week_id,
+                "cluster_id": cluster.id,
+                "cluster_title": cluster.title,
+                "matched_area_ids": matched_area_ids,
+            }
+
+            preview_source = (
+                result.articles.get(cluster.id)
+                or cluster.editorial_angle
+                or cluster.title
+            )
+            preview = self._truncate_preview(preview_source)
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("👍", callback_data=f"fb:L:{token}"),
+                    InlineKeyboardButton("👎", callback_data=f"fb:D:{token}"),
+                ]
+            ])
+
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"<b>{html.escape(cluster.title)}</b>\n\n"
+                        f"{html.escape(preview)}\n\n"
+                        "Was this article useful?"
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to send feedback preview for cluster %s: %s",
+                    cluster.id,
+                    e,
+                )
+                self._feedback_map.pop(token, None)
+            await asyncio.sleep(0.3)
+
+        quick_bite_ids = set(result.quick_bites_item_ids)
+        quick_bites_items = [
+            item for item in result.items if item.id in quick_bite_ids
+        ]
+        if quick_bites_items:
+            lines = ["<b>Quick Bites</b>", ""]
+            for item in quick_bites_items:
+                lines.append(
+                    f"• {html.escape(self._truncate_preview(item.summary, max_len=180))}"
+                )
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="\n".join(lines),
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.warning("Failed to send quick bites preview: %s", e)
+
+    async def _handle_feedback_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        query = update.callback_query
+        if not query or not query.data or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await query.answer("Access denied.")
+            return
+
+        match = re.match(r"^fb:([LD]):([0-9a-f]{6})$", query.data)
+        if not match:
+            await query.answer("Invalid feedback.")
+            return
+
+        direction, token = match.groups()
+        payload = self._feedback_map.pop(token, None)
+        if not payload:
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            await query.answer("Feedback expired.")
+            return
+
+        feedback = "like" if direction == "L" else "dislike"
+        delta = 0.03 if direction == "L" else -0.03
+
+        await self.db.save_article_feedback(
+            week_id=payload["week_id"],
+            cluster_id=payload["cluster_id"],
+            cluster_title=payload["cluster_title"],
+            feedback=feedback,
+            matched_area_ids=payload["matched_area_ids"],
+        )
+
+        profile = await self._load_profile() or self.config.user_profile or {}
+        area_ids = set(payload["matched_area_ids"])
+        if area_ids and profile.get("interest_areas"):
+            changed = False
+            for area in profile["interest_areas"]:
+                if area.get("id") not in area_ids:
+                    continue
+                old_weight = float(area.get("weight", 0.0))
+                new_weight = round(min(1.0, max(0.05, old_weight + delta)), 2)
+                if new_weight != old_weight:
+                    area["weight"] = new_weight
+                    changed = True
+            if changed:
+                await self._save_profile(profile)
+
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+        await query.answer("👍 Noted!" if direction == "L" else "👎 Noted!")
 
     # ── Message Handler ──
 
@@ -207,6 +468,7 @@ class DigestBot:
             "Commands:\n"
             "/generate — Generate digest now\n"
             "/regenerate [week] — Re-generate from existing items\n"
+            "/smoketest [n|demo] — Real API, low-cost smoke test\n"
             "/items — List this week's items\n"
             "/delete <id> — Remove an item\n"
             "/setup — Configure your interest profile\n"
@@ -215,6 +477,7 @@ class DigestBot:
             "/block — Add blocked topic\n"
             "/unblock — Remove blocked topic\n"
             "/threshold [preset] — View/set filtering strictness\n"
+            "/demo — Seed demo items for dry-run testing\n"
             "/language — Choose digest language\n"
             "/provider — Switch LLM provider\n"
             "/estimate — Estimate generation cost\n"
@@ -253,17 +516,24 @@ class DigestBot:
             result = await self.orchestrator.run(week_id, status_updater)
             if result:
                 try:
-                    with open(result, "rb") as f:
+                    with open(result.file_path, "rb") as f:
                         await context.bot.send_document(
                             chat_id=update.effective_chat.id,
                             document=f,
                             filename=f"digest-{week_id}.md",
                             caption=f"📖 Your weekly digest is ready!",
                         )
+                    profile = await self._load_profile() or self.config.user_profile or {}
+                    await self._send_feedback_messages(
+                        update.effective_chat.id,
+                        context,
+                        result,
+                        profile,
+                    )
                 except Exception as e:
                     logger.error("Failed to send document: %s", e)
                     await update.message.reply_text(
-                        f"✅ Digest generated and saved to: {result}"
+                        f"✅ Digest generated and saved to: {result.file_path}"
                     )
         except Exception as e:
             await update.message.reply_text(f"❌ Generation failed: {e}")
@@ -293,7 +563,8 @@ class DigestBot:
 
         if not items:
             await update.message.reply_text(
-                f"No collected items for {week_id}. Send some content first!"
+                f"No collected items for {week_id}. Send some content first, "
+                f"or use /demo to seed mock items."
             )
             return
 
@@ -308,7 +579,7 @@ class DigestBot:
             result = await self.dry_run_orchestrator.run(week_id, status_updater)
             if result:
                 try:
-                    with open(result, "rb") as f:
+                    with open(result.file_path, "rb") as f:
                         await context.bot.send_document(
                             chat_id=update.effective_chat.id,
                             document=f,
@@ -317,13 +588,113 @@ class DigestBot:
                         )
                 except Exception as e:
                     logger.error("Failed to send dry-run document: %s", e)
-                    await update.message.reply_text(f"✅ Dry-run complete. Saved to: {result}")
+                    await update.message.reply_text(
+                        f"✅ Dry-run complete. Saved to: {result.file_path}"
+                    )
             else:
                 await update.message.reply_text("⚠️ Dry run produced no output (all items filtered?).")
         except Exception as e:
             await update.message.reply_text(f"❌ Dry run failed: {e}")
         finally:
             self._dry_running = False
+
+    async def _handle_smoketest(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Run a minimal-cost real-API pipeline for prompt tuning."""
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        if not self.smoke_test_orchestrator:
+            await update.message.reply_text("❌ Smoke-test orchestrator not configured.")
+            return
+
+        if self._generating or self._dry_running or self._smoke_testing:
+            await update.message.reply_text("⏳ Generation already in progress.")
+            return
+
+        week_id = Database.current_week_id()
+        args = [arg.lower() for arg in (context.args or [])]
+        use_demo_items = "demo" in args
+
+        item_limit = SMOKE_ITEM_LIMIT_DEFAULT
+        for arg in args:
+            if arg.isdigit():
+                item_limit = max(1, min(int(arg), SMOKE_ITEM_LIMIT_MAX))
+                break
+
+        if use_demo_items:
+            source_items = build_demo_items(week_id)
+            source_label = "demo items"
+        else:
+            source_items = await self.db.get_items_by_week(
+                week_id,
+                status=ItemStatus.COLLECTED,
+            )
+            source_label = "collected items"
+
+        if not source_items:
+            await update.message.reply_text(
+                f"No collected items for {week_id}.\n"
+                f"Send a few real items first, or use `/smoketest demo`.",
+                parse_mode="Markdown",
+            )
+            return
+
+        smoke_items = prepare_smoke_test_items(source_items, limit=item_limit)
+        if not smoke_items:
+            await update.message.reply_text("No items available for smoke test.")
+            return
+
+        self._smoke_testing = True
+        status_updater = StatusUpdater(context.bot, update.effective_chat.id)
+        provider = self.config.llm.provider
+
+        await update.message.reply_text(
+            f"🧪 Real smoke test — running the full pipeline on {len(smoke_items)} {source_label}\n"
+            f"Provider: {provider}\n"
+            f"Translation: off\n"
+            "Mode: low-cost models + capped outputs + no publish side effects"
+        )
+
+        try:
+            result = await self.smoke_test_orchestrator.run(
+                week_id,
+                status_updater,
+                items_override=smoke_items,
+                digest_language_override="en",
+            )
+            if result:
+                try:
+                    with open(result.file_path, "rb") as f:
+                        await context.bot.send_document(
+                            chat_id=update.effective_chat.id,
+                            document=f,
+                            filename=f"smoketest-{week_id}.md",
+                            caption="🧪 Real-API smoke-test digest",
+                        )
+                except Exception as e:
+                    logger.error("Failed to send smoke-test document: %s", e)
+                    await update.message.reply_text(
+                        f"✅ Smoke test complete. Saved to: {result.file_path}"
+                    )
+
+                last_run = await self.db.get_last_run(week_id)
+                if last_run:
+                    await update.message.reply_text(
+                        f"Tokens: {last_run.total_input_tokens:,} in / "
+                        f"{last_run.total_output_tokens:,} out\n"
+                        f"Estimated cost: ${last_run.estimated_cost_usd:.4f}"
+                    )
+            else:
+                await update.message.reply_text("⚠️ Smoke test produced no output.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Smoke test failed: {e}")
+        finally:
+            self._smoke_testing = False
 
     async def _handle_items(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -353,6 +724,54 @@ class DigestBot:
                 lines.append(f"   {item.tags_str()}")
 
         await update.message.reply_text("\n".join(lines))
+
+    async def _handle_demo(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        week_id = Database.current_week_id()
+        args = [arg.lower() for arg in (context.args or [])]
+        existing_items = await self.db.get_items_by_week(week_id)
+        demo_items = [
+            item for item in existing_items if item.raw_content.startswith("[DEMO]")
+        ]
+
+        if args and args[0] in {"clear", "reset"}:
+            for item in demo_items:
+                await self.db.delete_item(item.id)
+            if args[0] == "clear":
+                await update.message.reply_text(
+                    f"Removed {len(demo_items)} demo item(s) from {week_id}."
+                )
+                return
+            existing_items = [
+                item for item in existing_items if not item.raw_content.startswith("[DEMO]")
+            ]
+        elif demo_items:
+            await update.message.reply_text(
+                f"{len(demo_items)} demo item(s) already exist for {week_id}.\n"
+                "Use /demo reset to replace them or /demo clear to remove them."
+            )
+            return
+
+        seeded_items = build_demo_items(week_id)
+        for item in seeded_items:
+            await self.db.save_item(item)
+
+        total_count = len(existing_items) + len(seeded_items)
+        await update.message.reply_text(
+            f"Seeded {len(seeded_items)} demo item(s) for {week_id}.\n\n"
+            "Next:\n"
+            "/items — inspect seeded content\n"
+            "/dryrun — run the full pipeline with zero API spend\n"
+            "/demo clear — remove demo items\n\n"
+            f"Current week total: {total_count} item(s)"
+        )
 
     async def _handle_delete(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -795,6 +1214,28 @@ class DigestBot:
                 llm, default_fast, self.db, self.config.user_profile
             )
 
+        if self.smoke_test_orchestrator:
+            smoke_fast_model, smoke_quality_model = get_smoke_models(provider_name)
+            self.smoke_test_orchestrator.clusterer = SmokeClustererAgent(
+                llm, smoke_fast_model, self.db, self.config.user_profile
+            )
+            self.smoke_test_orchestrator.researcher = SmokeResearcherAgent(
+                llm, smoke_quality_model, self.db, self.config.user_profile
+            )
+            self.smoke_test_orchestrator.writer = SmokeWriterAgent(
+                llm, smoke_quality_model, self.db, self.config.user_profile
+            )
+            self.smoke_test_orchestrator.editor = SmokeEditorAgent(
+                llm, smoke_quality_model, self.db, self.config.user_profile
+            )
+            self.smoke_test_orchestrator.translator = SmokeTranslatorAgent(
+                llm, smoke_fast_model, self.db, self.config.user_profile
+            )
+            if self.smoke_test_orchestrator.filter_agent:
+                self.smoke_test_orchestrator.filter_agent = SmokeFilterAgent(
+                    llm, smoke_fast_model, self.db, self.config.user_profile
+                )
+
         # Persist preference
         await self.db.set_setting("llm_provider", provider_name)
 
@@ -974,10 +1415,7 @@ class DigestBot:
         profile.pop("filtering_strictness", None)
         profile.pop("scoring_hints_for_python", None)
 
-        await self.db.set_setting("user_profile", json.dumps(profile, ensure_ascii=False))
-
-        if hasattr(self.orchestrator, "filter_agent") and self.orchestrator.filter_agent:
-            self.orchestrator.filter_agent.update_profile(profile)
+        await self._save_profile(profile)
 
         thresholds = get_scoring_thresholds(new_strictness)
         await update.message.reply_text(
@@ -1361,17 +1799,24 @@ class DigestBot:
             result = await self.orchestrator.run(week_id, status_updater)
             if result:
                 try:
-                    with open(result, "rb") as f:
+                    with open(result.file_path, "rb") as f:
                         await context.bot.send_document(
                             chat_id=update.effective_chat.id,
                             document=f,
                             filename=f"digest-{week_id}.md",
                             caption="📖 Your weekly digest is ready!",
                         )
+                    profile = await self._load_profile() or self.config.user_profile or {}
+                    await self._send_feedback_messages(
+                        update.effective_chat.id,
+                        context,
+                        result,
+                        profile,
+                    )
                 except Exception as e:
                     logger.error("Failed to send document: %s", e)
                     await update.message.reply_text(
-                        f"✅ Digest generated and saved to: {result}"
+                        f"✅ Digest generated and saved to: {result.file_path}"
                     )
         except Exception as e:
             await update.message.reply_text(f"❌ Generation failed: {e}")
@@ -1606,12 +2051,7 @@ class DigestBot:
             strictness=strictness,
         )
 
-        # Save to database
-        await self.db.set_setting("user_profile", json.dumps(profile, ensure_ascii=False))
-
-        # Update the filter agent's profile if orchestrator has one
-        if hasattr(self.orchestrator, 'filter_agent') and self.orchestrator.filter_agent:
-            self.orchestrator.filter_agent.update_profile(profile)
+        await self._save_profile(profile)
 
         # Summary for user
         area_count = len(confirmed_areas)
@@ -1775,7 +2215,9 @@ class DigestBot:
             BotCommand("start", "Show welcome message & help"),
             BotCommand("generate", "Generate weekly digest now"),
             BotCommand("dryrun", "Test pipeline without spending tokens (mock LLM)"),
+            BotCommand("smoketest", "Run a real low-cost pipeline smoke test"),
             BotCommand("regenerate", "Re-generate digest from existing items"),
+            BotCommand("demo", "Seed mock items for dry-run testing"),
             BotCommand("items", "List this week's collected items"),
             BotCommand("delete", "Remove an item by ID"),
             BotCommand("setup", "Configure your interest profile"),
@@ -1833,6 +2275,8 @@ class DigestBot:
         self.app.add_handler(CommandHandler("start", self._handle_start))
         self.app.add_handler(CommandHandler("generate", self._handle_generate))
         self.app.add_handler(CommandHandler("dryrun", self._handle_dryrun))
+        self.app.add_handler(CommandHandler("smoketest", self._handle_smoketest))
+        self.app.add_handler(CommandHandler("demo", self._handle_demo))
         self.app.add_handler(CommandHandler("regenerate", self._handle_regenerate))
         self.app.add_handler(CommandHandler("settings", self._handle_settings))
         self.app.add_handler(CommandHandler("topic", self._handle_topic))
@@ -1847,6 +2291,9 @@ class DigestBot:
         self.app.add_handler(CommandHandler("week", self._handle_week))
         self.app.add_handler(CommandHandler("estimate", self._handle_estimate))
         self.app.add_handler(CommandHandler("provider", self._handle_provider))
+        self.app.add_handler(
+            CallbackQueryHandler(self._handle_feedback_callback, pattern=r"^fb:")
+        )
         self.app.add_handler(
             CallbackQueryHandler(
                 self._handle_provider_callback, pattern=r"^provider:"

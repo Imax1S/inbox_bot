@@ -2,6 +2,7 @@
 
 import datetime
 import logging
+from typing import TYPE_CHECKING
 
 from telegram.ext import Application, ContextTypes
 
@@ -12,6 +13,9 @@ from ..pipeline.orchestrator import Orchestrator
 from ..pipeline.status_updater import StatusUpdater
 from ..rss_fetcher import PollResult, RSSFetcher, RSS_POLL_INTERVAL_SECONDS
 
+if TYPE_CHECKING:
+    from ..telegram.bot import DigestBot
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +24,7 @@ def setup_schedule(
     config: ScheduleConfig,
     orchestrator: Orchestrator,
     chat_ids: list[int],
+    digest_bot: "DigestBot | None" = None,
 ) -> None:
     """Set up the weekly digest generation schedule."""
     if not config.enabled:
@@ -52,13 +57,23 @@ def setup_schedule(
         try:
             result = await orchestrator.run(week_id, status_updater)
             if result:
+                profile = None
+                if digest_bot:
+                    profile = await digest_bot._load_profile() or digest_bot.config.user_profile or {}
                 for chat_id in chat_ids:
-                    with open(result, "rb") as f:
+                    with open(result.file_path, "rb") as f:
                         await context.bot.send_document(
                             chat_id=chat_id,
                             document=f,
                             filename=f"digest-{week_id}.md",
                             caption=f"📖 Your weekly digest for {week_id} is ready!",
+                        )
+                    if digest_bot and profile is not None:
+                        await digest_bot._send_feedback_messages(
+                            chat_id=chat_id,
+                            context=context,
+                            result=result,
+                            profile=profile,
                         )
             else:
                 for chat_id in chat_ids:

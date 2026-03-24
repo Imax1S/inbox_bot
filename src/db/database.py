@@ -3,6 +3,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import aiosqlite
 
@@ -67,6 +68,19 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS article_feedback (
+    id TEXT PRIMARY KEY,
+    week_id TEXT NOT NULL,
+    cluster_id TEXT NOT NULL,
+    cluster_title TEXT NOT NULL,
+    feedback TEXT NOT NULL,
+    matched_area_ids TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_article_feedback_week_id
+    ON article_feedback(week_id);
 
 CREATE TABLE IF NOT EXISTS rss_feeds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -379,6 +393,62 @@ class Database:
                 (key, value),
             )
             await db.commit()
+
+    # ── Article Feedback ──
+
+    async def save_article_feedback(
+        self,
+        week_id: str,
+        cluster_id: str,
+        cluster_title: str,
+        feedback: str,
+        matched_area_ids: list[str],
+    ) -> str:
+        feedback_id = str(uuid4())
+        created_at = _dt_to_str(datetime.now(timezone.utc))
+
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """INSERT INTO article_feedback
+                   (id, week_id, cluster_id, cluster_title, feedback,
+                    matched_area_ids, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    feedback_id,
+                    week_id,
+                    cluster_id,
+                    cluster_title,
+                    feedback,
+                    json.dumps(matched_area_ids, ensure_ascii=False),
+                    created_at,
+                ),
+            )
+            await db.commit()
+
+        return feedback_id
+
+    async def get_feedback_by_week(self, week_id: str) -> list[dict]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """SELECT * FROM article_feedback
+                   WHERE week_id = ?
+                   ORDER BY created_at ASC""",
+                (week_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [
+                    {
+                        "id": row["id"],
+                        "week_id": row["week_id"],
+                        "cluster_id": row["cluster_id"],
+                        "cluster_title": row["cluster_title"],
+                        "feedback": row["feedback"],
+                        "matched_area_ids": json.loads(row["matched_area_ids"]),
+                        "created_at": row["created_at"],
+                    }
+                    for row in rows
+                ]
 
     # ── RSS Feeds ──
 

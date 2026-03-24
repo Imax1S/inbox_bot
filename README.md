@@ -56,6 +56,8 @@ python -m src.main
 | `/start` | Introduction |
 | `/generate` | Run the digest pipeline now (alias: `/digest`) |
 | `/dryrun` | Run the full pipeline with a mock LLM — no API calls, no token spend |
+| `/smoketest` | Run a real-API low-cost pipeline smoke test for prompt tuning |
+| `/demo` | Seed demo items so `/dryrun` can exercise the full pipeline without real content |
 | `/regenerate` | Regenerate the digest for the current week |
 | `/items` | List collected items |
 | `/delete` | Remove an item |
@@ -85,6 +87,43 @@ python -m src.main
 ## Configuration
 
 Set LLM provider, models, schedule, and vault path via environment variables. Customize interests and writing style in `user_profile.json`. See `.env.example` for all options.
+
+## Zero-Cost Testing
+
+To test the pipeline without spending money:
+
+```text
+/demo
+/dryrun
+```
+
+`/demo` seeds five local mock items for the current week. `/dryrun` then runs the full pipeline with `DryRunLLMProvider`, so no API calls are made and token usage stays at zero.
+
+## Low-Cost Real Testing
+
+To run the real provider with minimal spend:
+
+```text
+/smoketest
+```
+
+Useful variants:
+
+```text
+/smoketest 1
+/smoketest 2
+/smoketest demo
+```
+
+`/smoketest` uses the real API, but keeps cost down by:
+
+- running on only 1-3 items
+- picking the shortest items first
+- truncating long content before sending it to the model
+- forcing English to skip translation
+- using cheaper smoke-test models
+- capping output tokens for writer/editor/researcher
+- avoiding publish side effects and writing output to a temp smoke-test file
 
 ## Project Structure
 

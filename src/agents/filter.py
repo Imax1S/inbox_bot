@@ -50,6 +50,7 @@ class FilterResult:
 class FilterAgent(BaseAgent):
     prompt_file = "filter.txt"
     agent_name = "filter"
+    MAX_TOKENS = 4096
 
     def __init__(
         self,
@@ -144,7 +145,7 @@ class FilterAgent(BaseAgent):
                 tool_description="Evaluate items for relevance and decide which to keep or filter out",
                 output_schema=self.OUTPUT_SCHEMA,
                 run_id=run_id,
-                max_tokens=4096,
+                max_tokens=self.MAX_TOKENS,
                 temperature=0.2,
             )
             result = FilterResult.from_json(data, valid_ids)

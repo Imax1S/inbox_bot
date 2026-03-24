@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 class WriterAgent(BaseAgent):
     prompt_file = "writer.txt"
     agent_name = "writer"
+    MIN_MAX_TOKENS = 2048
+    MAX_MAX_TOKENS = 8192
 
     def __init__(
         self,
@@ -24,6 +26,13 @@ class WriterAgent(BaseAgent):
     ):
         super().__init__(llm, model, db)
         self.user_profile = user_profile
+        self._prompt_template = self._format_prompt(
+            user_profile_section=build_agent_profile_prompt(user_profile, "writer")
+        )
+
+    def update_profile(self, user_profile: dict) -> None:
+        self.user_profile = user_profile
+        self._prompt_template = self._load_prompt()
         self._prompt_template = self._format_prompt(
             user_profile_section=build_agent_profile_prompt(user_profile, "writer")
         )
@@ -40,12 +49,12 @@ class WriterAgent(BaseAgent):
 
         # Target word count based on read time (~250 words/minute)
         target_words = cluster.estimated_read_minutes * 250
-        max_tokens = max(2048, target_words * 2)  # tokens ≈ words * 1.3, with margin
+        max_tokens = max(self.MIN_MAX_TOKENS, target_words * 2)
 
         response = await self._call_llm(
             user_message=user_message,
             run_id=run_id,
-            max_tokens=min(max_tokens, 8192),
+            max_tokens=min(max_tokens, self.MAX_MAX_TOKENS),
             temperature=0.8,
         )
 
