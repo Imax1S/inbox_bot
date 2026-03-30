@@ -9,8 +9,8 @@ from src.smoke_test import get_smoke_models, prepare_smoke_test_items
 def test_get_smoke_models_returns_low_cost_defaults():
     assert get_smoke_models("openai") == ("gpt-4.1-nano", "gpt-4.1-mini")
     assert get_smoke_models("anthropic") == (
-        "claude-haiku-3-5-20241022",
-        "claude-haiku-3-5-20241022",
+        "claude-haiku-4-5-20251001",
+        "claude-haiku-4-5-20251001",
     )
 
 

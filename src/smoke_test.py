@@ -21,7 +21,7 @@ def get_smoke_models(provider: str) -> tuple[str, str]:
     """Return (fast_model, quality_model) for low-cost real smoke tests."""
     if provider == "openai":
         return ("gpt-4.1-nano", "gpt-4.1-mini")
-    return ("claude-haiku-3-5-20241022", "claude-haiku-3-5-20241022")
+    return ("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001")
 
 
 def prepare_smoke_test_items(items: list[Item], limit: int = SMOKE_ITEM_LIMIT_DEFAULT) -> list[Item]:
