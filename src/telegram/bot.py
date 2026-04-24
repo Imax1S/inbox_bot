@@ -108,10 +108,12 @@ class DigestBot:
         self.profiler = profiler
         self.dry_run_orchestrator = dry_run_orchestrator
         self.smoke_test_orchestrator = smoke_test_orchestrator
+        self.channel_reader = None  # set by main.py when Telethon is configured
         self.app: Application | None = None
         self._generating = False
         self._dry_running = False
         self._smoke_testing = False
+        self._polling_channels = False
         self._feedback_map: dict[str, dict] = {}
 
     def _is_authorized(self, user_id: int) -> bool:
@@ -500,12 +502,12 @@ class DigestBot:
             await update.message.reply_text("⏳ Generation already in progress.")
             return
 
-        week_id = Database.current_week_id()
-        items = await self.db.get_items_by_week(week_id, status=ItemStatus.COLLECTED)
+        period_id = Database.current_period_id()
+        items = await self.db.get_items_by_week(period_id, status=ItemStatus.COLLECTED)
 
         if not items:
             await update.message.reply_text(
-                f"No items collected for {week_id}. Send me some content first!"
+                f"No items collected for {period_id}. Send me some content first!"
             )
             return
 
@@ -513,15 +515,21 @@ class DigestBot:
         status_updater = StatusUpdater(context.bot, update.effective_chat.id)
 
         try:
-            result = await self.orchestrator.run(week_id, status_updater)
+            result = await self.orchestrator.run(period_id, status_updater)
             if result:
                 try:
+                    if getattr(result, "telegraph_url", None):
+                        await context.bot.send_message(
+                            chat_id=update.effective_chat.id,
+                            text=f"📖 Digest {period_id}: {result.telegraph_url}",
+                            disable_web_page_preview=False,
+                        )
                     with open(result.file_path, "rb") as f:
                         await context.bot.send_document(
                             chat_id=update.effective_chat.id,
                             document=f,
-                            filename=f"digest-{week_id}.md",
-                            caption=f"📖 Your weekly digest is ready!",
+                            filename=f"digest-{period_id}.md",
+                            caption="📖 Digest is ready!",
                         )
                     profile = await self._load_profile() or self.config.user_profile or {}
                     await self._send_feedback_messages(
@@ -1758,14 +1766,16 @@ class DigestBot:
         if args:
             week_id = args[0]
             import re as _re
-            if not _re.match(r"^\d{4}-W\d{2}$", week_id):
+            # Accept either a period id (YYYY-MM-DD) or legacy ISO-week id (YYYY-Www)
+            if not _re.match(r"^\d{4}-(?:\d{2}-\d{2}|W\d{2})$", week_id):
                 await update.message.reply_text(
-                    "Invalid week format. Use YYYY-Www, e.g. `2026-W09`",
+                    "Invalid period format. Use YYYY-MM-DD (e.g. `2026-04-24`) "
+                    "or legacy YYYY-Www (e.g. `2026-W09`).",
                     parse_mode="Markdown",
                 )
                 return
         else:
-            week_id = Database.current_week_id()
+            week_id = Database.current_period_id()
 
         all_items = await self.db.get_items_by_week(week_id)
         if not all_items:
@@ -2206,6 +2216,255 @@ class DigestBot:
         title = feed["title"] or "Untitled"
         await update.message.reply_text(f"🗑 Removed feed: {title}\n{feed['url']}")
 
+    # ── Telegram channel commands (allowlist-based) ──
+
+    async def _handle_tgchannel(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        args = context.args or []
+        if not args:
+            await update.message.reply_text(
+                "Usage:\n"
+                "/tgchannel add @name_or_-100id — allowlist a channel\n"
+                "/tgchannel list — show allowlisted channels\n"
+                "/tgchannel remove <number> — remove by number from list\n"
+                "\nFirst-time setup: run `python -m src.scripts.telethon_login`."
+            )
+            return
+
+        sub = args[0].lower()
+        if sub == "add":
+            if len(args) < 2:
+                await update.message.reply_text("Usage: /tgchannel add @name_or_-100id")
+                return
+            identifier = args[1].strip()
+            if not (identifier.startswith("@") or identifier.startswith("-100")):
+                await update.message.reply_text(
+                    "Identifier must be @username or -100<numeric_id>."
+                )
+                return
+            try:
+                await self.db.add_telegram_channel(identifier)
+            except Exception as e:
+                await update.message.reply_text(f"❌ Could not add: {e}")
+                return
+            await update.message.reply_text(
+                f"✅ Channel {identifier} added to allowlist. "
+                "Polling every 30 min. Use /pollchannels to trigger now."
+            )
+        elif sub == "list":
+            channels = await self.db.list_telegram_channels()
+            if not channels:
+                await update.message.reply_text(
+                    "No channels in allowlist.\n"
+                    "Add one with: /tgchannel add @name"
+                )
+                return
+            lines = [f"📡 Allowlisted channels ({len(channels)}):"]
+            for i, ch in enumerate(channels, 1):
+                title = ch["title"] or "(unknown title)"
+                lines.append(
+                    f"{i}. {ch['identifier']} — {title} (last msg id: {ch['last_seen_msg_id']})"
+                )
+            await update.message.reply_text("\n".join(lines))
+        elif sub == "remove":
+            if len(args) < 2:
+                await update.message.reply_text("Usage: /tgchannel remove <number>")
+                return
+            try:
+                number = int(args[1])
+            except ValueError:
+                await update.message.reply_text("Number must be an integer.")
+                return
+            channels = await self.db.list_telegram_channels()
+            if number < 1 or number > len(channels):
+                await update.message.reply_text(
+                    f"Invalid number. Use 1..{len(channels)} (see /tgchannel list)."
+                )
+                return
+            channel = channels[number - 1]
+            await self.db.remove_telegram_channel(channel["id"])
+            await update.message.reply_text(
+                f"🗑 Removed {channel['identifier']} from allowlist."
+            )
+        else:
+            await update.message.reply_text(f"Unknown subcommand: {sub}")
+
+    async def _handle_pollchannels(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+        if self.channel_reader is None or not self.channel_reader.is_configured():
+            await update.message.reply_text(
+                "Channel ingestion is not configured. "
+                "Set TELETHON_API_ID/HASH in .env and run "
+                "`python -m src.scripts.telethon_login`."
+            )
+            return
+        if self._polling_channels:
+            await update.message.reply_text("⏳ Channel poll already in progress.")
+            return
+        self._polling_channels = True
+        try:
+            await update.message.reply_text("🔄 Polling channels…")
+            result = await self.channel_reader.poll_channels(
+                db=self.db, collector_agent=self.collector
+            )
+            await update.message.reply_text(
+                f"✅ Channel poll done. Added {result.total_added} item(s)."
+            )
+        except Exception as e:
+            logger.exception("Manual channel poll failed: %s", e)
+            await update.message.reply_text(f"❌ Poll failed: {e}")
+        finally:
+            self._polling_channels = False
+
+    # ── Cadence & doctor ──
+
+    async def _handle_cadence(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+        args = context.args or []
+        if not args:
+            stored = await self.db.get_setting("schedule_interval_days")
+            current = stored or str(self.config.schedule.interval_days)
+            await update.message.reply_text(
+                f"Current cadence: every {current} day(s).\n"
+                f"Change with: /cadence <N>   (takes effect after bot restart)"
+            )
+            return
+        try:
+            interval = int(args[0])
+        except ValueError:
+            await update.message.reply_text("Usage: /cadence <N>   where N is an integer ≥ 1.")
+            return
+        if interval < 1:
+            await update.message.reply_text("Interval must be at least 1 day.")
+            return
+        await self.db.set_setting("schedule_interval_days", str(interval))
+        await update.message.reply_text(
+            f"✅ Cadence saved: every {interval} day(s). "
+            "Restart the bot so the scheduler picks it up."
+        )
+
+    async def _handle_doctor(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_authorized(update.effective_user.id):
+            await update.message.reply_text("Access denied.")
+            return
+
+        checks: list[tuple[str, bool, str]] = []
+
+        # Bot token / users
+        checks.append((
+            "Telegram bot token",
+            bool(self.config.telegram.bot_token),
+            "ok" if self.config.telegram.bot_token else "TELEGRAM_BOT_TOKEN missing",
+        ))
+        checks.append((
+            "Authorized users",
+            bool(self.config.telegram.user_ids),
+            f"{len(self.config.telegram.user_ids)} id(s)"
+            if self.config.telegram.user_ids
+            else "TELEGRAM_USER_IDS missing",
+        ))
+
+        # LLM
+        provider = self.config.llm.provider
+        if provider in ("anthropic", "claude"):
+            has_key = bool(self.config.llm.anthropic_api_key)
+        elif provider == "openai":
+            has_key = bool(self.config.llm.openai_api_key)
+        else:
+            has_key = False
+        checks.append((
+            f"LLM provider ({provider})",
+            has_key,
+            "API key present" if has_key else "API key missing for provider",
+        ))
+
+        # Obsidian
+        vault = self.config.obsidian.vault_path
+        vault_ok = vault.exists() and vault.is_dir()
+        if not vault_ok:
+            try:
+                vault.mkdir(parents=True, exist_ok=True)
+                vault_ok = True
+            except Exception as e:
+                checks.append(("Obsidian vault", False, f"cannot create {vault}: {e}"))
+            else:
+                checks.append(("Obsidian vault", True, f"{vault} (created)"))
+        else:
+            checks.append(("Obsidian vault", True, str(vault)))
+
+        # User profile
+        profile = await self._load_profile() or self.config.user_profile or {}
+        areas = profile.get("interest_areas", [])
+        checks.append((
+            "User profile",
+            bool(areas),
+            f"{len(areas)} interest area(s)"
+            if areas
+            else "empty — run /setup",
+        ))
+
+        # Telegraph
+        tg_token = await self.db.get_setting("telegraph_access_token")
+        checks.append((
+            "Telegraph account",
+            True,
+            "token cached" if tg_token else "not created yet (happens on first /generate)",
+        ))
+
+        # Telethon
+        tele = self.config.telethon
+        if tele.api_id <= 0 or not tele.api_hash:
+            checks.append(("Telethon (channels)", False, "api_id/api_hash not set (optional)"))
+        elif not tele.session_path.exists():
+            checks.append((
+                "Telethon (channels)",
+                False,
+                f"session missing at {tele.session_path} — run telethon_login",
+            ))
+        else:
+            checks.append(("Telethon (channels)", True, f"session at {tele.session_path}"))
+
+        # Schedule
+        cadence = await self.db.get_setting("schedule_interval_days")
+        effective = cadence or str(self.config.schedule.interval_days)
+        checks.append((
+            "Schedule",
+            self.config.schedule.enabled,
+            f"every {effective} day(s) at "
+            f"{self.config.schedule.hour:02d}:{self.config.schedule.minute:02d} "
+            f"{self.config.schedule.timezone}"
+            + ("" if self.config.schedule.enabled else " (disabled)"),
+        ))
+
+        lines = ["🩺 Diagnostic report:\n"]
+        for name, ok, detail in checks:
+            mark = "✅" if ok else "⚠️"
+            lines.append(f"{mark} {name}: {detail}")
+        await update.message.reply_text("\n".join(lines))
+
     # ── Bot Setup ──
 
     @staticmethod
@@ -2232,8 +2491,12 @@ class DigestBot:
             BotCommand("status", "Show last pipeline run status"),
             BotCommand("logs", "Show last pipeline run logs"),
             BotCommand("cost", "Show token usage & cost report"),
-            BotCommand("week", "Current week info & stats"),
+            BotCommand("week", "Current period info & stats"),
             BotCommand("rss", "Manage RSS feed subscriptions"),
+            BotCommand("tgchannel", "Manage Telegram channel allowlist"),
+            BotCommand("pollchannels", "Poll allowlisted channels now"),
+            BotCommand("cadence", "View/set digest cadence in days"),
+            BotCommand("doctor", "Run diagnostics on configuration"),
         ])
 
     def build(self) -> Application:
@@ -2305,6 +2568,10 @@ class DigestBot:
             CallbackQueryHandler(self._handle_language_callback, pattern=r"^lang:")
         )
         self.app.add_handler(CommandHandler("rss", self._handle_rss))
+        self.app.add_handler(CommandHandler("tgchannel", self._handle_tgchannel))
+        self.app.add_handler(CommandHandler("pollchannels", self._handle_pollchannels))
+        self.app.add_handler(CommandHandler("cadence", self._handle_cadence))
+        self.app.add_handler(CommandHandler("doctor", self._handle_doctor))
         # Also keep /digest as an alias for /generate
         self.app.add_handler(CommandHandler("digest", self._handle_generate))
         self.app.add_handler(

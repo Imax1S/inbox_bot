@@ -12,11 +12,33 @@ from ..db.database import Database
 from ..pipeline.orchestrator import Orchestrator
 from ..pipeline.status_updater import StatusUpdater
 from ..rss_fetcher import PollResult, RSSFetcher, RSS_POLL_INTERVAL_SECONDS
+from ..telegram.channel_reader import (
+    ChannelReader,
+    CHANNEL_POLL_INTERVAL_SECONDS,
+)
 
 if TYPE_CHECKING:
     from ..telegram.bot import DigestBot
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_timezone(name: str):
+    try:
+        import pytz
+        return pytz.timezone(name)
+    except ImportError:
+        import zoneinfo
+        return zoneinfo.ZoneInfo(name)
+
+
+def _next_trigger_seconds(hour: int, minute: int, tz) -> float:
+    """Seconds from now until the next occurrence of hour:minute in tz."""
+    now = datetime.datetime.now(tz)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += datetime.timedelta(days=1)
+    return (target - now).total_seconds()
 
 
 def setup_schedule(
@@ -26,7 +48,7 @@ def setup_schedule(
     chat_ids: list[int],
     digest_bot: "DigestBot | None" = None,
 ) -> None:
-    """Set up the weekly digest generation schedule."""
+    """Set up the recurring digest generation schedule (every N days)."""
     if not config.enabled:
         logger.info("Scheduled digest generation is disabled")
         return
@@ -34,39 +56,36 @@ def setup_schedule(
         logger.warning("No authorized Telegram user IDs configured; scheduler disabled")
         return
 
-    try:
-        import pytz
-        tz = pytz.timezone(config.timezone)
-    except ImportError:
-        import zoneinfo
-        tz = zoneinfo.ZoneInfo(config.timezone)
-
-    trigger_time = datetime.time(
-        hour=config.hour,
-        minute=config.minute,
-        tzinfo=tz,
-    )
+    tz = _resolve_timezone(config.timezone)
+    interval_seconds = max(1, config.interval_days) * 24 * 3600
+    first_delay = _next_trigger_seconds(config.hour, config.minute, tz)
 
     async def scheduled_generate(context: ContextTypes.DEFAULT_TYPE) -> None:
         """Callback for scheduled digest generation."""
-        week_id = Database.current_week_id()
-        logger.info("Scheduled generation triggered for %s", week_id)
+        period_id = Database.current_period_id()
+        logger.info("Scheduled generation triggered for period %s", period_id)
 
         # Reuse one status thread for progress while broadcasting final output.
         status_updater = StatusUpdater(context.bot, chat_ids[0])
         try:
-            result = await orchestrator.run(week_id, status_updater)
+            result = await orchestrator.run(period_id, status_updater)
             if result:
                 profile = None
                 if digest_bot:
                     profile = await digest_bot._load_profile() or digest_bot.config.user_profile or {}
                 for chat_id in chat_ids:
+                    if getattr(result, "telegraph_url", None):
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"📖 Digest {period_id}: {result.telegraph_url}",
+                            disable_web_page_preview=False,
+                        )
                     with open(result.file_path, "rb") as f:
                         await context.bot.send_document(
                             chat_id=chat_id,
                             document=f,
-                            filename=f"digest-{week_id}.md",
-                            caption=f"📖 Your weekly digest for {week_id} is ready!",
+                            filename=f"digest-{period_id}.md",
+                            caption=f"📖 Digest for {period_id} is ready!",
                         )
                     if digest_bot and profile is not None:
                         await digest_bot._send_feedback_messages(
@@ -79,7 +98,7 @@ def setup_schedule(
                 for chat_id in chat_ids:
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text=f"No items collected for {week_id}. Skipping digest.",
+                        text=f"No items collected for {period_id}. Skipping digest.",
                     )
         except Exception as e:
             logger.exception("Scheduled generation failed: %s", e)
@@ -89,23 +108,20 @@ def setup_schedule(
                     text=f"❌ Scheduled digest generation failed: {e}",
                 )
 
-    # Schedule using python-telegram-bot's JobQueue
-    # days is a tuple of integers: (0=Monday, ..., 6=Sunday)
-    app.job_queue.run_daily(
+    app.job_queue.run_repeating(
         callback=scheduled_generate,
-        time=trigger_time,
-        days=(config.day_of_week,),
-        name="weekly_digest",
+        interval=interval_seconds,
+        first=first_delay,
+        name="digest_schedule",
     )
 
-    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    day_name = day_names[config.day_of_week]
     logger.info(
-        "Scheduled digest generation: %s at %02d:%02d %s",
-        day_name,
+        "Scheduled digest generation: every %d day(s), first at %02d:%02d %s (in %.1f min)",
+        config.interval_days,
         config.hour,
         config.minute,
         config.timezone,
+        first_delay / 60.0,
     )
 
 
@@ -148,6 +164,82 @@ def setup_rss_schedule(
         "RSS feed polling scheduled: every %d seconds",
         RSS_POLL_INTERVAL_SECONDS,
     )
+
+
+def setup_channel_schedule(
+    app: Application,
+    db: Database,
+    collector: CollectorAgent,
+    channel_reader: ChannelReader,
+    chat_ids: list[int],
+) -> None:
+    """Set up periodic Telegram channel polling via Telethon (allowlist-only)."""
+    if not chat_ids:
+        logger.warning(
+            "No authorized Telegram user IDs configured; channel scheduler disabled"
+        )
+        return
+    if not channel_reader.is_configured():
+        logger.info(
+            "Telegram channel ingestion disabled: "
+            "set TELETHON_API_ID/HASH and run `python -m src.scripts.telethon_login`"
+        )
+        return
+
+    async def poll_channels(context: ContextTypes.DEFAULT_TYPE) -> None:
+        logger.info("Channel poll triggered")
+        try:
+            result = await channel_reader.poll_channels(
+                db=db, collector_agent=collector
+            )
+        except Exception as e:
+            logger.exception("Channel poll failed: %s", e)
+            return
+        if result.total_added > 0:
+            logger.info("Channel poll added %d new item(s)", result.total_added)
+            await _notify_channel_updates(context, chat_ids, result)
+
+    app.job_queue.run_repeating(
+        callback=poll_channels,
+        interval=CHANNEL_POLL_INTERVAL_SECONDS,
+        first=90,
+        name="channel_poll",
+    )
+    logger.info(
+        "Telegram channel polling scheduled: every %d seconds",
+        CHANNEL_POLL_INTERVAL_SECONDS,
+    )
+
+
+async def _notify_channel_updates(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_ids: list[int],
+    poll_result,
+) -> None:
+    """Send Telegram notification about new channel posts."""
+    by_channel: dict[str, list[dict]] = {}
+    for item in poll_result.items:
+        by_channel.setdefault(item["channel"], []).append(item)
+
+    lines = [f"📡 <b>{poll_result.total_added} new channel post(s)</b>\n"]
+    for channel, items in by_channel.items():
+        lines.append(f"<b>{channel}</b>")
+        for item in items:
+            title = item["title"] or item["link"]
+            lines.append(f"  • <a href=\"{item['link']}\">{title}</a>")
+        lines.append("")
+
+    text = "\n".join(lines).strip()
+    for chat_id in chat_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            logger.warning("Failed to send channel notification to %s: %s", chat_id, e)
 
 
 async def _notify_rss_updates(

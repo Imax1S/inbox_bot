@@ -92,13 +92,28 @@ CREATE TABLE IF NOT EXISTS rss_feeds (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rss_feeds_url ON rss_feeds(url);
+
+CREATE TABLE IF NOT EXISTS telegram_channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    identifier TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    last_seen_msg_id INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_channels_identifier
+    ON telegram_channels(identifier);
 """
 
 
+def _current_period_id() -> str:
+    """Current partition id for items/runs: ISO date (YYYY-MM-DD)."""
+    return datetime.now().strftime("%Y-%m-%d")
+
+
 def _current_week_id() -> str:
-    now = datetime.now()
-    iso = now.isocalendar()
-    return f"{iso.year}-W{iso.week:02d}"
+    """Backwards-compatible alias — now returns a YYYY-MM-DD period id."""
+    return _current_period_id()
 
 
 def _dt_to_str(dt: datetime) -> str:
@@ -515,8 +530,74 @@ class Database:
                 row = await cursor.fetchone()
                 return row is not None
 
+    # ── Telegram Channels ──
+
+    async def add_telegram_channel(self, identifier: str, title: str = "") -> int:
+        """Add an allowlisted Telegram channel. Identifier: @username or -100… id."""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """INSERT INTO telegram_channels
+                   (identifier, title, created_at)
+                   VALUES (?, ?, ?)""",
+                (identifier, title, _dt_to_str(datetime.now(timezone.utc))),
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def list_telegram_channels(self) -> list[dict]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM telegram_channels ORDER BY created_at ASC"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [
+                    {
+                        "id": row["id"],
+                        "identifier": row["identifier"],
+                        "title": row["title"],
+                        "last_seen_msg_id": row["last_seen_msg_id"],
+                        "created_at": row["created_at"],
+                    }
+                    for row in rows
+                ]
+
+    async def remove_telegram_channel(self, channel_id: int) -> bool:
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "DELETE FROM telegram_channels WHERE id = ?", (channel_id,)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def update_telegram_channel_checkpoint(
+        self, channel_id: int, last_seen_msg_id: int, title: str | None = None
+    ) -> None:
+        async with aiosqlite.connect(self.db_path) as db:
+            if title is None:
+                await db.execute(
+                    """UPDATE telegram_channels
+                       SET last_seen_msg_id = ?
+                       WHERE id = ?""",
+                    (last_seen_msg_id, channel_id),
+                )
+            else:
+                await db.execute(
+                    """UPDATE telegram_channels
+                       SET last_seen_msg_id = ?, title = ?
+                       WHERE id = ?""",
+                    (last_seen_msg_id, title, channel_id),
+                )
+            await db.commit()
+
     # ── Utilities ──
 
     @staticmethod
+    def current_period_id() -> str:
+        """Current period id: ISO date YYYY-MM-DD."""
+        return _current_period_id()
+
+    @staticmethod
     def current_week_id() -> str:
-        return _current_week_id()
+        """Deprecated alias kept for compatibility. Returns period id (YYYY-MM-DD)."""
+        return _current_period_id()

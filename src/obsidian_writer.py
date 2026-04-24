@@ -21,9 +21,7 @@ class ObsidianWriter:
     def _generate_filename(self, date: datetime | None = None) -> str:
         if date is None:
             date = datetime.now()
-        year = date.year
-        week = date.isocalendar()[1]
-        return f"{year}-W{week:02d}.md"
+        return f"{date.strftime('%Y-%m-%d')}.md"
 
     def save_digest(
         self,
@@ -47,12 +45,12 @@ class ObsidianWriter:
     def _generate_frontmatter(self, date: datetime | None = None) -> str:
         if date is None:
             date = datetime.now()
-        iso = date.isocalendar()
+        period_id = date.strftime("%Y-%m-%d")
         return (
             "---\n"
-            f"created: {date.strftime('%Y-%m-%d')}\n"
-            f"week: {iso.year}-W{iso.week:02d}\n"
-            "type: weekly-digest\n"
+            f"created: {period_id}\n"
+            f"period: {period_id}\n"
+            "type: digest\n"
             "source: inbox-agent-bot\n"
             "pipeline: multi-agent\n"
             "---\n"

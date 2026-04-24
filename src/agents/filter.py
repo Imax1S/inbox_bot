@@ -164,7 +164,11 @@ class FilterAgent(BaseAgent):
             return result
 
         except Exception as e:
-            logger.warning("Failed to get structured filter response: %s — keeping all items", e)
+            logger.exception(
+                "Filter agent failed (%s: %s) — falling back to keep-all",
+                type(e).__name__,
+                e,
+            )
             return FilterResult(
                 kept_item_ids=[item.id for item in items],
                 filtered_items=[],
