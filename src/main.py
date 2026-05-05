@@ -20,7 +20,13 @@ from .llm.dry_run import DryRunLLMProvider
 from .llm.provider import create_provider
 from .obsidian_writer import ObsidianWriter
 from .pipeline.orchestrator import Orchestrator
-from .pipeline.scheduler import setup_rss_schedule, setup_schedule
+from .pipeline.scheduler import (
+    setup_channel_schedule,
+    setup_rss_schedule,
+    setup_schedule,
+)
+from .telegram.channel_reader import ChannelReader
+from .telegraph_writer import TelegraphWriter
 from .smoke_test import (
     SmokeClustererAgent,
     SmokeEditorAgent,
@@ -67,6 +73,17 @@ async def init_db_and_settings(db: Database, config, file_profile: dict) -> tupl
 
     # Load user profile (DB > file fallback)
     user_profile = await get_user_profile(db, file_profile)
+
+    # Cadence override from DB (set via /cadence)
+    stored_cadence = await db.get_setting("schedule_interval_days")
+    if stored_cadence:
+        try:
+            config.schedule.interval_days = max(1, int(stored_cadence))
+            logger.info(
+                "Using cadence from DB: every %d day(s)", config.schedule.interval_days
+            )
+        except ValueError:
+            logger.warning("Invalid schedule_interval_days in DB: %r", stored_cadence)
 
     return config.llm.provider, user_profile
 
@@ -127,8 +144,9 @@ def main() -> None:
         llm, config.llm.filter_model, db, user_profile
     )
 
-    # Create Obsidian writer
+    # Create Obsidian writer + Telegraph publisher
     obsidian = ObsidianWriter(config.obsidian)
+    telegraph_writer = TelegraphWriter()
 
     # Create orchestrator
     orchestrator = Orchestrator(
@@ -140,6 +158,7 @@ def main() -> None:
         translator=translator,
         obsidian_writer=obsidian,
         filter_agent=filter_agent,
+        telegraph_writer=telegraph_writer,
     )
 
     # Create dry-run orchestrator (uses mock LLM, saves to temp dir)
@@ -203,6 +222,27 @@ def main() -> None:
         collector=collector,
         chat_ids=config.telegram.user_ids,
     )
+
+    # Set up Telegram channel polling (disabled unless Telethon env is configured)
+    if config.telethon.api_id > 0 and config.telethon.api_hash:
+        channel_reader = ChannelReader(
+            api_id=config.telethon.api_id,
+            api_hash=config.telethon.api_hash,
+            session_path=config.telethon.session_path,
+        )
+        bot.channel_reader = channel_reader
+        setup_channel_schedule(
+            app=app,
+            db=db,
+            collector=collector,
+            channel_reader=channel_reader,
+            chat_ids=config.telegram.user_ids,
+        )
+    else:
+        logger.info(
+            "Telegram channel ingestion disabled: "
+            "TELETHON_API_ID/HASH not set in .env"
+        )
 
     # Run
     logger.info("Starting bot...")

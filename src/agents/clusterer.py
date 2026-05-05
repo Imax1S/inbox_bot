@@ -116,7 +116,11 @@ class ClustererAgent(BaseAgent):
             return result
 
         except Exception as e:
-            logger.warning("Failed to get structured clusterer response: %s — falling back", e)
+            logger.exception(
+                "Clusterer agent failed (%s: %s) — falling back to single cluster",
+                type(e).__name__,
+                e,
+            )
             return ClusterResult(
                 clusters=[
                     Cluster(

@@ -85,6 +85,7 @@ class DigestResult:
     articles: dict[str, str]
     quick_bites_item_ids: list[str]
     items: list[Item]
+    telegraph_url: str | None = None
 
 
 @dataclass

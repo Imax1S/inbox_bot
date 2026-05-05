@@ -14,6 +14,7 @@ from ..db.database import Database
 from ..db.models import DigestResult, Item, ItemStatus, PipelineRun, PipelineStatus
 from ..llm.provider import estimate_cost
 from ..obsidian_writer import ObsidianWriter
+from ..telegraph_writer import TelegraphWriter
 from .status_updater import StatusUpdater
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class Orchestrator:
         translator: TranslatorAgent,
         obsidian_writer: ObsidianWriter,
         filter_agent: FilterAgent | None = None,
+        telegraph_writer: TelegraphWriter | None = None,
         dry_run: bool = False,
     ):
         self.db = db
@@ -45,6 +47,7 @@ class Orchestrator:
         self.translator = translator
         self.obsidian_writer = obsidian_writer
         self.filter_agent = filter_agent
+        self.telegraph_writer = telegraph_writer
         self.dry_run = dry_run
 
     async def run(
@@ -261,6 +264,20 @@ class Orchestrator:
             # ── Save & Finalize ──
             file_path = self.obsidian_writer.save_digest(magazine)
 
+            telegraph_url: str | None = None
+            if self.telegraph_writer and not self.dry_run:
+                try:
+                    telegraph_url = await self.telegraph_writer.publish(
+                        db=self.db,
+                        title=f"Digest {week_id}",
+                        markdown=magazine,
+                    )
+                except Exception as pub_exc:
+                    logger.exception(
+                        "Telegraph publish failed (%s) — continuing without URL",
+                        pub_exc,
+                    )
+
             if not self.dry_run:
                 await self.db.update_items_status(
                     [item.id for item in items], ItemStatus.PUBLISHED
@@ -328,6 +345,7 @@ class Orchestrator:
                 articles=articles,
                 quick_bites_item_ids=cluster_result.quick_bites_item_ids,
                 items=items,
+                telegraph_url=telegraph_url,
             )
 
         except Exception as e:

@@ -89,7 +89,11 @@ class CollectorAgent(BaseAgent):
                 language=data.get("language", "ru"),
             )
         except Exception as e:
-            logger.warning("Failed to get structured collector response: %s", e)
+            logger.exception(
+                "Collector agent failed (%s: %s) — falling back to raw-content summary",
+                type(e).__name__,
+                e,
+            )
             return CollectorResult(
                 summary=raw_content[:200],
                 tags=[],

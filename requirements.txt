@@ -12,6 +12,9 @@ beautifulsoup4>=4.12.0
 readability-lxml>=0.8.1
 lxml>=5.0.0
 
+# Telegram channel ingestion (read-only, allowlist-enforced in code)
+telethon>=1.36.0
+
 # Database
 aiosqlite>=0.20.0
 

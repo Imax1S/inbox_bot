@@ -87,7 +87,11 @@ class ProfilerAgent(BaseAgent):
                 data["interest_areas"] = []
             return data
         except Exception as e:
-            logger.warning("Failed to get structured profiler response: %s", e)
+            logger.exception(
+                "Profiler agent failed (%s: %s) — returning empty profile",
+                type(e).__name__,
+                e,
+            )
             return {"interest_areas": [], "error": str(e)}
 
     @staticmethod
